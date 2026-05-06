@@ -1,0 +1,18 @@
+{
+  "name": "@claudevis/shared",
+  "version": "0.0.0",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "vitest": "2.1.4"
+  },
+  "dependencies": {
+    "zod": "3.23.8"
+  }
+}

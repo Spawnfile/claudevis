@@ -1,0 +1,186 @@
+import type { Event } from '@claudevis/shared';
+import type React from 'react';
+import { useConnection } from './store/connection.js';
+
+export function Chat({ sessionId }: { sessionId: string | null }) {
+  const events = useConnection((s) => s.events);
+  if (!sessionId)
+    return <div style={{ color: '#7a8699' }}>Select a session or open a new one.</div>;
+  const filtered = events.filter((e) => e.sessionId === sessionId);
+  return (
+    <div data-testid="chat">
+      {filtered.map((e) => (
+        <ChatRow key={e.id} event={e} />
+      ))}
+    </div>
+  );
+}
+
+// Exhaustiveness helper — the `default` arm assigns the remaining union
+// member to `never`. If a future protocol change adds an Event type and
+// this switch isn't updated, TypeScript fails to compile here.
+const assertNever = (x: never): null => {
+  console.warn('unhandled event type', x);
+  return null;
+};
+
+function ChatRow({ event: e }: { event: Event }): React.JSX.Element | null {
+  switch (e.type) {
+    case 'user.prompt':
+      return (
+        <div className="msg user" data-evtype="user.prompt">
+          <div className="who">🧑 You</div>
+          <div className="body">{e.content}</div>
+        </div>
+      );
+    case 'agent.thinking':
+      return (
+        <div className="msg thinking" data-evtype="agent.thinking">
+          <div className="who">💭 Thinking</div>
+          <div className="body">{e.content}</div>
+        </div>
+      );
+    case 'agent.message':
+      return (
+        <div className="msg agent" data-evtype="agent.message">
+          <div className="who">⚒ Agent</div>
+          <div className="body">{e.content}</div>
+        </div>
+      );
+    case 'tool.started':
+      return (
+        <div className="msg tool" data-evtype="tool.started">
+          <div className="who">⚙ Tool call</div>
+          <div className="body">
+            <code>{e.name}</code>
+            <pre style={{ fontSize: 11, color: '#7a8699', margin: 0 }}>
+              {JSON.stringify(e.input, null, 2)}
+            </pre>
+          </div>
+        </div>
+      );
+    case 'tool.completed':
+      return (
+        <div className="msg tool" data-evtype="tool.completed">
+          <div className="who">✓ Tool result ({e.status})</div>
+          <div className="body">
+            <pre style={{ fontSize: 11, color: '#7a8699', margin: 0 }}>
+              {JSON.stringify(e.output, null, 2)}
+            </pre>
+            <span style={{ fontSize: 10, color: '#7a8699' }}>{e.durationMs}ms</span>
+          </div>
+        </div>
+      );
+    case 'subagent.dispatched':
+      return (
+        <div className="msg subagent" data-evtype="subagent.dispatched">
+          <div className="who">🪄 Subagent dispatched: {e.agentType}</div>
+          <div className="body">{e.prompt}</div>
+        </div>
+      );
+    case 'subagent.completed':
+      return (
+        <div className="msg subagent" data-evtype="subagent.completed">
+          <div className="who">🪄 Subagent done ({e.status})</div>
+          <div className="body">
+            <pre style={{ fontSize: 11, color: '#7a8699', margin: 0 }}>
+              {JSON.stringify(e.result, null, 2)}
+            </pre>
+          </div>
+        </div>
+      );
+    case 'tokens.updated':
+      return (
+        <div className="msg tokens" data-evtype="tokens.updated">
+          <div className="who">💰 Tokens</div>
+          <div className="body" style={{ fontSize: 11 }}>
+            in {e.input} · out {e.output} · cached {e.cached} · ${e.costUsd.toFixed(4)} · {e.model}
+          </div>
+        </div>
+      );
+    case 'file.changed':
+      return (
+        <div className="msg file" data-evtype="file.changed">
+          <div className="who">📝 File changed</div>
+          <div className="body">
+            <code>{e.path}</code> <span style={{ color: '#6dba3a' }}>+{e.plus}</span>{' '}
+            <span style={{ color: '#d94a4a' }}>-{e.minus}</span>
+            {e.preview && (
+              <pre style={{ fontSize: 11, color: '#7a8699', margin: 0 }}>{e.preview}</pre>
+            )}
+          </div>
+        </div>
+      );
+    case 'permission.requested':
+      return (
+        <div className="msg permission" data-evtype="permission.requested">
+          <div className="who" style={{ color: '#d94a4a' }}>
+            🔴 Permission required: {e.toolName}
+          </div>
+          <div className="body">
+            <pre style={{ fontSize: 11, color: '#7a8699', margin: 0 }}>
+              {JSON.stringify(e.toolInput, null, 2)}
+            </pre>
+          </div>
+        </div>
+      );
+    case 'permission.resolved':
+      return (
+        <div className="msg permission" data-evtype="permission.resolved">
+          <div className="who">Permission: {e.decision}</div>
+        </div>
+      );
+    case 'skill.invoked':
+      return (
+        <div className="msg skill" data-evtype="skill.invoked">
+          <div className="who">🛠 Skill: {e.skillName}</div>
+          {e.args && <div className="body">{e.args}</div>}
+        </div>
+      );
+    case 'session.started':
+      return (
+        <div className="msg system" data-evtype="session.started">
+          <div className="who">▶ session started</div>
+          <div className="body" style={{ fontSize: 11, color: '#7a8699' }}>
+            {e.name} · {e.cwd} · {e.model}
+            {e.repo && e.branch ? ` · ${e.repo}@${e.branch}` : ''}
+          </div>
+        </div>
+      );
+    case 'session.ended':
+      return (
+        <div className="msg system" data-evtype="session.ended">
+          <div className="who">■ session ended ({e.reason})</div>
+        </div>
+      );
+    case 'session.idle':
+      return (
+        <div className="msg system" data-evtype="session.idle">
+          <div className="who">💤 idle ({Math.round(e.durationMs / 1000)}s)</div>
+        </div>
+      );
+    case 'session.mode.changed':
+      return (
+        <div className="msg system" data-evtype="session.mode.changed">
+          <div className="who">⚙ mode → {e.mode}</div>
+        </div>
+      );
+    case 'interrupt.signaled':
+      return (
+        <div className="msg system" data-evtype="interrupt.signaled">
+          <div className="who">⏹ interrupt</div>
+        </div>
+      );
+    case 'error':
+      return (
+        <div className="msg error" data-evtype="error">
+          <div className="who" style={{ color: '#d94a4a' }}>
+            ⚠ error{e.recoverable ? '' : ' (critical)'}
+          </div>
+          <div className="body">{e.message}</div>
+        </div>
+      );
+    default:
+      return assertNever(e);
+  }
+}

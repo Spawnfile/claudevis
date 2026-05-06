@@ -1,0 +1,45 @@
+# dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# build output
+dist/
+build/
+.next/
+out/
+*.tsbuildinfo
+
+# env / secrets
+.env
+.env.local
+.env.*.local
+
+# logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# test / coverage
+coverage/
+.nyc_output/
+
+# bun
+bun.lockb
+
+# claude / superpowers transient state
+.superpowers/
+.claude/local-settings.json
+/test-results/
+packages/web/test-results/
+packages/web/playwright-report/
+docs/

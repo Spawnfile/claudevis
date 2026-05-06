@@ -1,0 +1,517 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>claudevis — an isometric GUI for Claude Code</title>
+<meta name="description" content="An isometric pixel-art interface for Claude Code. Watch your agents work like villagers in a tiny world.">
+<link rel="canonical" href="https://claudevis.com/">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600;700&family=Inter+Tight:wght@300;400;500;600&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg-deep: #060814;
+  --bg-midnight: #0a0d1c;
+  --bg-indigo: #1a1f3a;
+  --bg-violet: #2a2046;
+  --torch: #e8a541;
+  --torch-glow: #ffd16a;
+  --moonlit: #d8d2e8;
+  --ember: #c4413c;
+  --parchment: #efe1c0;
+  --line: rgba(232,165,65,0.18);
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html { scroll-behavior: smooth; }
+body {
+  font-family: 'Inter Tight', system-ui, sans-serif;
+  background:
+    radial-gradient(ellipse 90% 60% at 50% 0%, var(--bg-violet) 0%, transparent 50%),
+    radial-gradient(ellipse at 50% 100%, var(--bg-indigo) 0%, var(--bg-deep) 70%);
+  color: var(--parchment);
+  line-height: 1.5;
+  overflow-x: hidden;
+  min-height: 100vh;
+}
+
+/* starfield */
+.stars { position: fixed; inset: 0; pointer-events: none; z-index: 0; }
+.stars::before, .stars::after {
+  content: ""; position: absolute; inset: 0;
+  background-image:
+    radial-gradient(1px 1px at 12% 14%, #fff 50%, transparent),
+    radial-gradient(1px 1px at 25% 38%, #fff 50%, transparent),
+    radial-gradient(1px 1px at 67% 22%, #c8b9eb 50%, transparent),
+    radial-gradient(1px 1px at 88% 56%, #fff 50%, transparent),
+    radial-gradient(2px 2px at 45% 8%, #ffd987 50%, transparent),
+    radial-gradient(1px 1px at 91% 12%, #fff 50%, transparent),
+    radial-gradient(1px 1px at 32% 62%, #c8b9eb 50%, transparent),
+    radial-gradient(1px 1px at 8% 80%, #fff 50%, transparent),
+    radial-gradient(1px 1px at 78% 42%, #fff 50%, transparent);
+  opacity: 0.7;
+  animation: twinkle 5s ease-in-out infinite alternate;
+}
+.stars::after { animation-delay: 2.5s; opacity: 0.4; transform: translateX(40px) translateY(20px); }
+@keyframes twinkle { from { opacity: 0.35; } to { opacity: 0.85; } }
+
+/* moon */
+.moon {
+  position: fixed; top: 80px; right: 8%;
+  width: 70px; height: 70px;
+  background: radial-gradient(circle at 35% 35%, #f4ecd0 0%, #d4c69a 70%, #a89f7a 100%);
+  border-radius: 50%;
+  box-shadow: 0 0 60px rgba(244, 236, 208, 0.25);
+  z-index: 1;
+}
+.moon::before {
+  content: ""; position: absolute;
+  width: 16px; height: 16px; border-radius: 50%;
+  background: rgba(168, 159, 122, 0.5); top: 25%; left: 30%;
+}
+.moon::after {
+  content: ""; position: absolute;
+  width: 8px; height: 8px; border-radius: 50%;
+  background: rgba(168, 159, 122, 0.4); top: 60%; left: 55%;
+}
+
+/* topbar */
+.topbar {
+  position: relative; z-index: 5;
+  padding: 24px 56px;
+  display: flex; justify-content: space-between; align-items: center;
+}
+.brand {
+  display: flex; align-items: center; gap: 14px;
+  font-family: 'Cinzel', serif; font-weight: 600;
+  font-size: 18px; letter-spacing: 0.18em; color: var(--torch);
+}
+.brand-mark {
+  width: 14px; height: 14px; background: var(--torch);
+  box-shadow: 0 0 12px var(--torch-glow);
+  position: relative;
+}
+.brand-mark::before {
+  content: ""; position: absolute; inset: 4px;
+  background: var(--bg-deep);
+}
+.nav { display: flex; gap: 36px; }
+.nav a {
+  color: var(--parchment); text-decoration: none;
+  font-size: 13px; letter-spacing: 0.12em; font-weight: 500;
+  text-transform: uppercase; opacity: 0.7;
+  transition: opacity 0.2s, color 0.2s;
+}
+.nav a:hover { opacity: 1; color: var(--torch); }
+
+/* hero */
+.hero {
+  position: relative; z-index: 4;
+  text-align: center;
+  padding: 60px 24px 0;
+}
+.eyebrow {
+  font-family: 'JetBrains Mono', monospace;
+  color: var(--torch); text-transform: uppercase;
+  letter-spacing: 0.4em; font-size: 11px;
+  margin-bottom: 32px; opacity: 0.85;
+}
+.eyebrow::before, .eyebrow::after {
+  content: "✦"; margin: 0 14px; opacity: 0.6;
+}
+.hero h1 {
+  font-family: 'Cinzel', serif; font-weight: 600;
+  font-size: clamp(40px, 6vw, 78px); line-height: 1.06;
+  letter-spacing: 0.005em; margin-bottom: 28px;
+  text-shadow: 0 0 40px rgba(232, 165, 65, 0.18);
+  max-width: 920px; margin-left: auto; margin-right: auto;
+}
+.hero h1 em {
+  font-style: italic; color: var(--torch);
+  text-shadow: 0 0 24px rgba(232, 165, 65, 0.55);
+  font-weight: 500;
+}
+.hero p.lede {
+  max-width: 600px; margin: 0 auto 44px;
+  font-size: 17px; line-height: 1.7;
+  color: var(--moonlit); opacity: 0.82;
+  font-weight: 300;
+}
+.cta-row {
+  display: flex; gap: 14px; justify-content: center;
+  margin-bottom: 80px; flex-wrap: wrap;
+}
+.btn {
+  display: inline-flex; align-items: center; gap: 10px;
+  padding: 14px 30px;
+  font-family: 'Cinzel', serif; font-weight: 500;
+  font-size: 12.5px; letter-spacing: 0.22em;
+  text-transform: uppercase; text-decoration: none;
+  border: 1px solid var(--torch);
+  transition: all 0.22s ease;
+  cursor: pointer;
+}
+.btn-primary {
+  background: var(--torch); color: var(--bg-deep);
+  box-shadow: 0 0 28px rgba(232, 165, 65, 0.32);
+}
+.btn-primary:hover {
+  background: var(--torch-glow);
+  box-shadow: 0 0 36px rgba(232, 165, 65, 0.55);
+  transform: translateY(-1px);
+}
+.btn-ghost { background: transparent; color: var(--torch); }
+.btn-ghost:hover {
+  background: rgba(232, 165, 65, 0.08);
+  border-color: var(--torch-glow);
+}
+
+/* iso scene */
+.scene-wrap {
+  position: relative; max-width: 1080px;
+  margin: 0 auto; padding: 0 24px;
+}
+.scene {
+  position: relative; aspect-ratio: 2/1;
+  filter: drop-shadow(0 -10px 40px rgba(232, 165, 65, 0.15));
+}
+.scene svg {
+  width: 100%; height: 100%;
+  image-rendering: pixelated; image-rendering: crisp-edges;
+}
+.ember {
+  position: absolute; width: 3px; height: 3px;
+  background: var(--torch-glow); border-radius: 50%;
+  box-shadow: 0 0 6px 1px var(--torch-glow);
+  animation: rise 7s linear infinite;
+  pointer-events: none;
+}
+@keyframes rise {
+  0% { transform: translateY(0) translateX(0) scale(0.5); opacity: 0; }
+  15% { opacity: 1; transform: translateY(-30px) translateX(4px) scale(1); }
+  85% { opacity: 0.4; }
+  100% { transform: translateY(-180px) translateX(28px) scale(0.3); opacity: 0; }
+}
+.lantern-window {
+  animation: flicker 2.4s ease-in-out infinite alternate;
+  transform-origin: center;
+}
+@keyframes flicker {
+  0%, 100% { opacity: 1; }
+  40% { opacity: 0.85; }
+  60% { opacity: 0.95; }
+  75% { opacity: 0.78; }
+}
+
+/* content */
+.content {
+  position: relative; z-index: 3;
+  max-width: 1080px; margin: 120px auto;
+  padding: 0 32px;
+}
+
+.section-title {
+  font-family: 'Cinzel', serif; font-weight: 600;
+  font-size: clamp(30px, 4vw, 46px);
+  margin-bottom: 60px;
+  text-align: center; letter-spacing: 0.02em;
+}
+.section-title::before { content: "❦ "; color: var(--torch); margin-right: 8px; }
+.section-title::after { content: " ❦"; color: var(--torch); margin-left: 8px; }
+
+.feature-grid {
+  display: grid; gap: 24px;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+}
+.feature-card {
+  background: linear-gradient(180deg, rgba(26, 31, 58, 0.6), rgba(10, 13, 28, 0.4));
+  border: 1px solid var(--line);
+  padding: 36px 32px;
+  position: relative;
+  transition: border-color 0.3s, transform 0.3s;
+}
+.feature-card:hover {
+  border-color: var(--torch);
+  transform: translateY(-4px);
+}
+.feature-card .num {
+  font-family: 'Cinzel', serif; font-weight: 700;
+  color: var(--torch); font-size: 14px;
+  letter-spacing: 0.2em; opacity: 0.7;
+  margin-bottom: 16px;
+}
+.feature-card h3 {
+  font-family: 'Cinzel', serif; font-weight: 600;
+  font-size: 22px; color: var(--parchment);
+  margin-bottom: 14px; letter-spacing: 0.01em;
+}
+.feature-card p {
+  font-size: 15px; line-height: 1.65;
+  color: var(--moonlit); opacity: 0.78;
+  font-weight: 300;
+}
+
+/* quote band */
+.band {
+  margin: 120px 0;
+  padding: 80px 32px;
+  text-align: center;
+  position: relative;
+  background: linear-gradient(90deg, transparent, rgba(232, 165, 65, 0.04), transparent);
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+.band q {
+  font-family: 'Cinzel', serif; font-style: italic;
+  font-size: clamp(22px, 3vw, 34px);
+  font-weight: 500; color: var(--parchment);
+  line-height: 1.4; max-width: 820px;
+  display: block; margin: 0 auto;
+  quotes: '“' '”';
+}
+.band q::before, .band q::after {
+  color: var(--torch); font-size: 1.4em; opacity: 0.6;
+}
+.band cite {
+  display: block; margin-top: 24px;
+  font-family: 'JetBrains Mono', monospace; font-size: 11px;
+  color: var(--torch); letter-spacing: 0.32em; text-transform: uppercase;
+  font-style: normal;
+}
+
+/* footer */
+.footer {
+  position: relative; z-index: 3;
+  border-top: 1px solid var(--line);
+  margin-top: 60px; padding: 40px 56px;
+  display: flex; justify-content: space-between; align-items: center;
+  flex-wrap: wrap; gap: 24px;
+  font-family: 'JetBrains Mono', monospace; font-size: 11px;
+  color: var(--moonlit); opacity: 0.55; line-height: 1.7;
+}
+.footer .legal { max-width: 600px; }
+@media (max-width: 700px) {
+  .topbar { padding: 20px 24px; }
+  .nav { display: none; }
+  .footer { padding: 32px 24px; }
+}
+</style>
+</head>
+<body>
+<div class="stars"></div>
+<div class="moon"></div>
+
+<header class="topbar">
+  <div class="brand"><span class="brand-mark"></span>CLAUDEVIS</div>
+  <nav class="nav">
+    <a href="#mechanics">Mechanics</a>
+    <a href="/lore/">Lore</a>
+    <a href="https://github.com/claudevis-app/claudevis">Github ↗</a>
+  </nav>
+</header>
+
+<section class="hero">
+  <div class="eyebrow">In the workshop</div>
+  <h1>Watch your agents <em>work the night</em><br>like villagers in a tiny world</h1>
+  <p class="lede">An isometric pixel-art interface for Claude Code. Subagents become summoning rings. Token cost becomes stamina. Permission prompts become rolling thunder over a sleeping town.</p>
+  <div class="cta-row">
+    <a href="/lore/" class="btn btn-primary">Read the lore →</a>
+    <a href="https://github.com/claudevis-app/claudevis" class="btn btn-ghost">★ Github</a>
+  </div>
+
+  <div class="scene-wrap">
+    <div class="scene">
+      <svg viewBox="0 0 920 460" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <radialGradient id="bigGlow" cx="50%" cy="50%" r="60%">
+            <stop offset="0%" stop-color="#ffd97a" stop-opacity="0.55"/>
+            <stop offset="60%" stop-color="#e8a541" stop-opacity="0.15"/>
+            <stop offset="100%" stop-color="#e8a541" stop-opacity="0"/>
+          </radialGradient>
+          <radialGradient id="winGlow" cx="50%" cy="50%" r="55%">
+            <stop offset="0%" stop-color="#ffe28a"/>
+            <stop offset="100%" stop-color="#e8a541" stop-opacity="0.4"/>
+          </radialGradient>
+        </defs>
+
+        <!-- distant mountains -->
+        <path d="M 0 280 L 100 200 L 180 250 L 280 180 L 380 230 L 460 170 L 560 220 L 660 180 L 760 230 L 860 200 L 920 240 L 920 460 L 0 460 Z" fill="#0e1228" opacity="0.85"/>
+        <path d="M 0 320 L 110 270 L 220 305 L 340 260 L 460 300 L 580 270 L 700 310 L 820 280 L 920 305 L 920 460 L 0 460 Z" fill="#0a0d1c" opacity="0.95"/>
+
+        <!-- lantern post light bloom (back) -->
+        <circle cx="220" cy="305" r="100" fill="url(#bigGlow)"/>
+        <circle cx="700" cy="305" r="100" fill="url(#bigGlow)"/>
+
+        <!-- ground diamond plot (5x5 grass) -->
+        <!-- center at (460, 350) -->
+        <g>
+          <polygon points="460,270 620,350 460,430 300,350" fill="#1f3a2c" stroke="#0e1f17" stroke-width="1"/>
+          <!-- subtle tile lines -->
+          <g stroke="#152c20" stroke-width="0.8" fill="none" opacity="0.7">
+            <line x1="396" y1="302" x2="556" y2="382"/>
+            <line x1="428" y1="286" x2="588" y2="366"/>
+            <line x1="492" y1="286" x2="332" y2="366"/>
+            <line x1="524" y1="302" x2="364" y2="382"/>
+          </g>
+        </g>
+
+        <!-- stone path -->
+        <polygon points="460,350 524,318 588,350 524,382" fill="#3a3a48"/>
+        <polygon points="588,350 652,318 716,350 652,382" fill="#33333f"/>
+        <polygon points="332,350 396,318 460,350 396,382" fill="#33333f"/>
+
+        <!-- left cottage (small) -->
+        <g transform="translate(360, 264)">
+          <!-- base -->
+          <polygon points="0,30 40,50 40,90 0,70" fill="#3d3a4a"/>
+          <polygon points="40,50 80,30 80,70 40,90" fill="#2d2a37"/>
+          <polygon points="0,30 40,10 80,30 40,50" fill="#4a4658"/>
+          <!-- roof -->
+          <polygon points="-4,30 40,4 84,30 40,56" fill="#5a3a2e"/>
+          <polygon points="40,56 84,30 84,38 40,64" fill="#3e2a22" opacity="0.7"/>
+          <!-- window glow -->
+          <rect x="14" y="42" width="14" height="14" fill="url(#winGlow)" class="lantern-window"/>
+          <rect x="50" y="42" width="14" height="14" fill="url(#winGlow)" class="lantern-window" style="animation-delay: 0.7s;"/>
+          <!-- chimney -->
+          <rect x="56" y="14" width="8" height="10" fill="#2a2330"/>
+        </g>
+
+        <!-- right cottage (larger) -->
+        <g transform="translate(496, 244)">
+          <polygon points="0,40 60,72 60,124 0,92" fill="#403c4e"/>
+          <polygon points="60,72 120,40 120,90 60,124" fill="#2f2c3c"/>
+          <polygon points="0,40 60,8 120,40 60,72" fill="#4d4860"/>
+          <!-- roof -->
+          <polygon points="-6,40 60,2 126,40 60,76" fill="#5a3a2e"/>
+          <polygon points="60,76 126,40 126,48 60,84" fill="#3e2a22" opacity="0.7"/>
+          <!-- windows -->
+          <rect x="18" y="58" width="14" height="16" fill="url(#winGlow)" class="lantern-window" style="animation-delay: 0.3s;"/>
+          <rect x="76" y="58" width="14" height="16" fill="url(#winGlow)" class="lantern-window" style="animation-delay: 1.1s;"/>
+          <!-- door -->
+          <rect x="48" y="84" width="14" height="22" fill="#1a1623"/>
+          <!-- chimney with smoke -->
+          <rect x="86" y="14" width="10" height="14" fill="#2a2330"/>
+          <ellipse cx="91" cy="6" rx="6" ry="3" fill="#3a3a48" opacity="0.5"/>
+          <ellipse cx="93" cy="0" rx="8" ry="4" fill="#3a3a48" opacity="0.3"/>
+        </g>
+
+        <!-- left lantern post -->
+        <g transform="translate(220, 250)">
+          <line x1="0" y1="0" x2="0" y2="55" stroke="#1d1a26" stroke-width="3"/>
+          <rect x="-6" y="-10" width="12" height="14" fill="#2a2330"/>
+          <rect x="-4" y="-8" width="8" height="10" fill="url(#winGlow)" class="lantern-window"/>
+          <circle cx="0" cy="-3" r="22" fill="#ffd97a" opacity="0.18"/>
+        </g>
+
+        <!-- right lantern post -->
+        <g transform="translate(700, 250)">
+          <line x1="0" y1="0" x2="0" y2="55" stroke="#1d1a26" stroke-width="3"/>
+          <rect x="-6" y="-10" width="12" height="14" fill="#2a2330"/>
+          <rect x="-4" y="-8" width="8" height="10" fill="url(#winGlow)" class="lantern-window" style="animation-delay: 1.4s;"/>
+          <circle cx="0" cy="-3" r="22" fill="#ffd97a" opacity="0.18"/>
+        </g>
+
+        <!-- NPC 1 (villager on path) -->
+        <g transform="translate(450, 330)">
+          <!-- shadow -->
+          <ellipse cx="6" cy="20" rx="9" ry="3" fill="#000" opacity="0.4"/>
+          <!-- body -->
+          <rect x="2" y="6" width="8" height="10" fill="#7a5a44"/>
+          <!-- head -->
+          <rect x="3" y="0" width="6" height="6" fill="#d4a87a"/>
+          <!-- legs -->
+          <rect x="2" y="16" width="3" height="4" fill="#3a2a1f"/>
+          <rect x="7" y="16" width="3" height="4" fill="#3a2a1f"/>
+        </g>
+
+        <!-- NPC 2 (villager) -->
+        <g transform="translate(530, 358)">
+          <ellipse cx="6" cy="20" rx="9" ry="3" fill="#000" opacity="0.4"/>
+          <rect x="2" y="6" width="8" height="10" fill="#5a4070"/>
+          <rect x="3" y="0" width="6" height="6" fill="#d4a87a"/>
+          <rect x="2" y="16" width="3" height="4" fill="#3a2a1f"/>
+          <rect x="7" y="16" width="3" height="4" fill="#3a2a1f"/>
+        </g>
+
+        <!-- mode icon floating above villager 1 -->
+        <g transform="translate(449, 312)">
+          <circle r="6" fill="#0a0d1c" stroke="#e8a541" stroke-width="1"/>
+          <text x="0" y="2" text-anchor="middle" font-size="7" fill="#e8a541" font-family="serif">⚡</text>
+        </g>
+
+        <!-- well in foreground -->
+        <g transform="translate(620, 380)">
+          <ellipse cx="0" cy="0" rx="22" ry="11" fill="#2a2330"/>
+          <ellipse cx="0" cy="-2" rx="20" ry="9" fill="#1d1a26"/>
+          <ellipse cx="0" cy="-3" rx="14" ry="6" fill="#0a0a14"/>
+          <rect x="-2" y="-30" width="4" height="22" fill="#3a3024"/>
+          <line x1="-12" y1="-30" x2="12" y2="-30" stroke="#3a3024" stroke-width="3"/>
+          <polygon points="-14,-32 14,-32 12,-36 -12,-36" fill="#5a3a2e"/>
+        </g>
+
+        <!-- subagent ring (decorative) -->
+        <g transform="translate(370, 360)" opacity="0.7">
+          <circle r="18" fill="none" stroke="#e8a541" stroke-width="0.8" stroke-dasharray="3 3"/>
+          <circle r="14" fill="none" stroke="#e8a541" stroke-width="0.5" opacity="0.6"/>
+        </g>
+      </svg>
+    </div>
+    <div class="ember" style="left: 32%; top: 60%; animation-delay: 0s;"></div>
+    <div class="ember" style="left: 38%; top: 70%; animation-delay: 1.2s;"></div>
+    <div class="ember" style="left: 56%; top: 65%; animation-delay: 2.4s;"></div>
+    <div class="ember" style="left: 64%; top: 72%; animation-delay: 3.6s;"></div>
+    <div class="ember" style="left: 72%; top: 60%; animation-delay: 4.8s;"></div>
+    <div class="ember" style="left: 28%; top: 75%; animation-delay: 0.6s;"></div>
+  </div>
+</section>
+
+<section class="content" id="mechanics">
+  <h2 class="section-title">Mechanics of the kingdom</h2>
+  <div class="feature-grid">
+    <div class="feature-card">
+      <div class="num">I.</div>
+      <h3>Multi-session world</h3>
+      <p>Open four parallel Claude sessions. Each one a villager with a name, a robe, and a flag. Watch them work side-by-side without losing track of any one.</p>
+    </div>
+    <div class="feature-card">
+      <div class="num">II.</div>
+      <h3>Subagent summons</h3>
+      <p>When the agent dispatches a Task, a summon ring opens beside the parent and a junior villager appears. Click the apprentice to read their work.</p>
+    </div>
+    <div class="feature-card">
+      <div class="num">III.</div>
+      <h3>Permission as omen</h3>
+      <p>Permission prompts surface as red sigils above the villager's head. Open the sigil to see the diff or the command, then allow, deny, or always.</p>
+    </div>
+    <div class="feature-card">
+      <div class="num">IV.</div>
+      <h3>Stamina &amp; the purse</h3>
+      <p>Token cost shows as a stamina bar over each villager. Bread for Haiku, coin for Sonnet, gold for Opus. The purse never lies.</p>
+    </div>
+    <div class="feature-card">
+      <div class="num">V.</div>
+      <h3>Built-in broadcast</h3>
+      <p>OBS broadcast mode hides chrome and turns the world into a stream-friendly stage. Plug in, hit record, narrate the chaos.</p>
+    </div>
+    <div class="feature-card">
+      <div class="num">VI.</div>
+      <h3>Local-first, always</h3>
+      <p>Your code never leaves your machine. claudevis spawns the official Claude CLI as a subprocess. No cloud, no upload, no compromise.</p>
+    </div>
+  </div>
+</section>
+
+<section class="band">
+  <q>If you've ever wished you could see your agents thinking, this is what that looks like.</q>
+  <cite>— claudevis design spec</cite>
+</section>
+
+<footer class="footer">
+  <div class="legal">
+    claudevis is an unofficial, community-built GUI for Claude Code. Not affiliated with, endorsed by, or sponsored by Anthropic, PBC. Claude is a trademark of Anthropic, PBC.
+  </div>
+  <div>© 2026 claudevis-app · MIT</div>
+</footer>
+</body>
+</html>
