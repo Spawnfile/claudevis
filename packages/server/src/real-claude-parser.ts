@@ -250,6 +250,43 @@ export function createRealCliParser(ctx: ParserContext): RealCliLineParser {
           recoverable: true,
         });
       }
+      // Synthesize permission.requested + permission.resolved(deny) pairs from
+      // permission_denials[]. Stream-json mode does not carry interactive
+      // permission events; claude auto-denies and reports denials at end of
+      // turn in this structured array. Each denial becomes one informational
+      // request + immediate deny pair so the UI can surface "this tool failed
+      // because of permissions" context. The synthesized requestId uses the
+      // 'auto-deny-' prefix so the UI and SessionManager can distinguish
+      // synthesized denials from interactive (fake-mode) requests.
+      // "M3b.1 probe findings" for the wire shape.
+      const denials = Array.isArray(line.permission_denials) ? line.permission_denials : [];
+      for (const entry of denials) {
+        if (entry === null || typeof entry !== 'object') continue;
+        const denial = entry as Record<string, unknown>;
+        const toolUseId = typeof denial.tool_use_id === 'string' ? denial.tool_use_id : null;
+        if (toolUseId === null) continue;
+        const toolName = typeof denial.tool_name === 'string' ? denial.tool_name : 'unknown';
+        const toolInput = denial.tool_input ?? null;
+        const requestId = `auto-deny-${toolUseId}`;
+        events.push({
+          id: ctx.newEventId(),
+          ts: ctx.now(),
+          sessionId: ctx.sessionId,
+          type: 'permission.requested',
+          requestId,
+          toolName,
+          toolInput,
+          callId: toolUseId,
+        });
+        events.push({
+          id: ctx.newEventId(),
+          ts: ctx.now(),
+          sessionId: ctx.sessionId,
+          type: 'permission.resolved',
+          requestId,
+          decision: 'deny',
+        });
+      }
       return events;
     }
 

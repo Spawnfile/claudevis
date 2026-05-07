@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'bun:test';
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import {
   type ParserContext,
   type RealCliLineParser,
@@ -643,8 +645,161 @@ describe('createRealCliParser — subagent.* synthesis (REPLACE policy)', () => 
   });
 });
 
-import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+describe('createRealCliParser — permission.requested synthesis from result.permission_denials[]', () => {
+  it('synthesizes permission.requested from result.permission_denials[]', () => {
+    const p = createRealCliParser(freshCtx());
+    const events = p({
+      type: 'result',
+      subtype: 'success',
+      is_error: false,
+      duration_ms: 1000,
+      duration_api_ms: 800,
+      num_turns: 1,
+      total_cost_usd: 0.001,
+      usage: { input_tokens: 10, output_tokens: 20, cache_read_input_tokens: 0 },
+      permission_denials: [
+        {
+          tool_name: 'Write',
+          tool_use_id: 'toolu_abc123',
+          tool_input: { file_path: '/tmp/x.txt', content: 'hi' },
+        },
+      ],
+    });
+
+    // tokens.updated still emitted first
+    const tokens = events.find((e) => e.type === 'tokens.updated');
+    expect(tokens).toBeDefined();
+
+    // Then a permission.requested + permission.resolved pair
+    const requested = events.find((e) => e.type === 'permission.requested');
+    expect(requested).toBeDefined();
+    if (requested?.type === 'permission.requested') {
+      expect(requested.requestId).toBe('auto-deny-toolu_abc123');
+      expect(requested.toolName).toBe('Write');
+      expect(requested.callId).toBe('toolu_abc123');
+      expect(requested.toolInput).toEqual({ file_path: '/tmp/x.txt', content: 'hi' });
+    }
+
+    const resolved = events.find((e) => e.type === 'permission.resolved');
+    expect(resolved).toBeDefined();
+    if (resolved?.type === 'permission.resolved') {
+      expect(resolved.requestId).toBe('auto-deny-toolu_abc123');
+      expect(resolved.decision).toBe('deny');
+    }
+
+    // Order: tokens.updated → requested → resolved
+    const types = events.map((e) => e.type);
+    const tokensIdx = types.indexOf('tokens.updated');
+    const requestedIdx = types.indexOf('permission.requested');
+    const resolvedIdx = types.indexOf('permission.resolved');
+    expect(tokensIdx).toBeLessThan(requestedIdx);
+    expect(requestedIdx).toBeLessThan(resolvedIdx);
+  });
+
+  it('emits one request+resolved pair per denial entry', () => {
+    const p = createRealCliParser(freshCtx());
+    const events = p({
+      type: 'result',
+      subtype: 'success',
+      is_error: false,
+      duration_ms: 1000,
+      permission_denials: [
+        { tool_name: 'Write', tool_use_id: 'toolu_a', tool_input: {} },
+        { tool_name: 'Bash', tool_use_id: 'toolu_b', tool_input: { command: 'ls' } },
+      ],
+    });
+    expect(events.filter((e) => e.type === 'permission.requested')).toHaveLength(2);
+    expect(events.filter((e) => e.type === 'permission.resolved')).toHaveLength(2);
+  });
+
+  it('result line without permission_denials emits only tokens.updated (no synthesis)', () => {
+    const p = createRealCliParser(freshCtx());
+    const events = p({
+      type: 'result',
+      subtype: 'success',
+      is_error: false,
+      duration_ms: 1000,
+    });
+    expect(events.find((e) => e.type === 'permission.requested')).toBeUndefined();
+    expect(events.find((e) => e.type === 'permission.resolved')).toBeUndefined();
+  });
+
+  it('skips denial entries with non-string tool_use_id', () => {
+    const p = createRealCliParser(freshCtx());
+    const events = p({
+      type: 'result',
+      subtype: 'success',
+      is_error: false,
+      duration_ms: 1000,
+      permission_denials: [
+        { tool_name: 'Write', tool_use_id: null, tool_input: {} },
+        { tool_name: 'Bash', tool_use_id: 'toolu_ok', tool_input: {} },
+      ],
+    });
+    expect(events.filter((e) => e.type === 'permission.requested')).toHaveLength(1);
+  });
+
+  it('permission_denials: [] (empty array) emits no synthesis events', () => {
+    const p = createRealCliParser(freshCtx());
+    const events = p({
+      type: 'result',
+      subtype: 'success',
+      is_error: false,
+      duration_ms: 1000,
+      permission_denials: [],
+    });
+    expect(events.filter((e) => e.type === 'permission.requested')).toHaveLength(0);
+    expect(events.filter((e) => e.type === 'permission.resolved')).toHaveLength(0);
+  });
+
+  it('skips non-object denial entries (primitive values in array)', () => {
+    const p = createRealCliParser(freshCtx());
+    const events = p({
+      type: 'result',
+      subtype: 'success',
+      is_error: false,
+      duration_ms: 1000,
+      permission_denials: [
+        42,
+        'bad',
+        null,
+        { tool_use_id: 'toolu_ok', tool_name: 'Bash', tool_input: {} },
+      ],
+    });
+    expect(events.filter((e) => e.type === 'permission.requested')).toHaveLength(1);
+  });
+
+  const fixturePath = join(
+    import.meta.dir,
+    'fixtures',
+    'real-claude-captures',
+    'permission-bash.ndjson',
+  );
+  const fixtureMissing = !existsSync(fixturePath);
+  it.skipIf(fixtureMissing)(
+    'replays permission-bash.ndjson — synthesizes auto-deny pair from permission_denials[]',
+    () => {
+      const lines = readFileSync(fixturePath, 'utf8').split('\n').filter(Boolean);
+      const p = createRealCliParser(freshCtx());
+      const allEvents = lines.flatMap((l) => p(JSON.parse(l)));
+      const requested = allEvents.filter((e) => e.type === 'permission.requested');
+      const resolved = allEvents.filter((e) => e.type === 'permission.resolved');
+      expect(requested.length).toBeGreaterThanOrEqual(1);
+      expect(resolved.length).toBe(requested.length);
+      // All synthesized requestIds must have the 'auto-deny-' prefix.
+      for (const e of requested) {
+        if (e.type === 'permission.requested') {
+          expect(e.requestId.startsWith('auto-deny-')).toBe(true);
+        }
+      }
+      for (const e of resolved) {
+        if (e.type === 'permission.resolved') {
+          expect(e.decision).toBe('deny');
+        }
+      }
+    },
+  );
+});
 
 describe('createRealCliParser — fixture replay', () => {
   const dir = join(import.meta.dir, 'fixtures', 'real-claude-captures');

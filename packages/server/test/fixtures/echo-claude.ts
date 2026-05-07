@@ -1,12 +1,15 @@
 #!/usr/bin/env bun
-// Fake claude for tests. Exercises the FULL Event vocabulary from spec
-// §4 so the contract is proven end-to-end before real claude is wired
-// up. For each user.prompt it emits a representative scripted sequence:
+// Fake claude for tests. Exercises the FULL Event vocabulary from spec §4
+// so the contract is proven end-to-end before real claude is wired up.
+// For each ordinary user.prompt it emits a representative scripted scene:
 //   agent.thinking → tool.started/completed → subagent.dispatched/
 //   completed → file.changed → tokens.updated → agent.message
 //
-// One prompt = one scripted "scene". Real claude integration in M2
-// replaces this fixture with a parser of actual stream-json output.
+// M3b.1 also adds a `/permission-test` sentinel prompt that emits a
+// `permission.requested` Event and waits for the host to write a
+// `permission_response` line back on stdin (driven by
+// SessionManager.respondToPermission); on response, emits the matching
+// `permission.resolved` Event.
 
 const stdin = process.stdin;
 let buffer = '';
@@ -20,6 +23,7 @@ emit({ type: 'session.started', name: 'fake', cwd: process.cwd(), model: 'fake-m
 
 let counter = 0;
 const next = () => `c-${++counter}`;
+const pendingRequests = new Set<string>();
 
 stdin.setEncoding('utf8');
 stdin.on('data', async (chunk) => {
@@ -29,10 +33,54 @@ stdin.on('data', async (chunk) => {
     buffer = buffer.slice(idx + 1);
     if (!line.trim()) continue;
     try {
-      const msg = JSON.parse(line) as { type: string; content?: string };
+      const msg = JSON.parse(line) as {
+        type: string;
+        content?: string;
+        request_id?: string;
+        decision?: string;
+      };
+
+      // M3b.1: SessionManager.respondToPermission writes lines of this shape.
+      // When the request_id matches a tracked sentinel-emitted permission, emit
+      // the matching permission.resolved Event and clear the tracking entry.
+      if (msg.type === 'permission_response') {
+        if (typeof msg.request_id === 'string' && pendingRequests.has(msg.request_id)) {
+          const decision =
+            msg.decision === 'allow' || msg.decision === 'deny' || msg.decision === 'always'
+              ? msg.decision
+              : 'deny';
+          await sleep(5);
+          emit({
+            type: 'permission.resolved',
+            requestId: msg.request_id,
+            decision,
+          });
+          pendingRequests.delete(msg.request_id);
+        }
+        continue;
+      }
+
       if (msg.type !== 'user.prompt') continue;
       const text = msg.content ?? '';
 
+      // M3b.1 sentinel: trigger a permission flow without firing the default
+      // scripted scene. requestId uses a "req-fake-" prefix so SessionManager
+      // tracks it (non-`auto-deny-` prefix → enters pendingPermissions Map).
+      if (text.startsWith('/permission-test')) {
+        const requestId = `req-fake-${++counter}`;
+        pendingRequests.add(requestId);
+        await sleep(5);
+        emit({
+          type: 'permission.requested',
+          requestId,
+          toolName: 'Bash',
+          toolInput: { command: 'echo hi from fake fixture' },
+          callId: `tu-fake-${counter}`,
+        });
+        continue;
+      }
+
+      // Default scripted scene — unchanged from M2/M3a.
       await sleep(5);
       emit({ type: 'agent.thinking', content: `Considering: ${text}`, streaming: false });
 

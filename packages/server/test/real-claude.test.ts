@@ -15,6 +15,12 @@ interface ProbeScenario {
   prompts: string[];
   /** ms to wait after the last prompt before SIGINT */
   settleMs: number;
+  /**
+   * Extra spawn args appended to the base stream-json invocation. Used by
+   * the M3b.1 probe to override permission mode. Optional; default scenarios
+   * pass nothing extra.
+   */
+  extraArgs?: string[];
 }
 
 const scenarios: ProbeScenario[] = [
@@ -43,12 +49,24 @@ const scenarios: ProbeScenario[] = [
     ],
     settleMs: 90_000,
   },
+  {
+    name: 'permission-bash',
+    prompts: [
+      'Use the Bash tool to run "echo hi > ./m3b-probe.txt". Do not ask for clarification — just run it.',
+    ],
+    // claude --permission-mode default disables auto-accept so a Bash write
+    // should trigger the permission flow (if stream-json carries it).
+    extraArgs: ['--permission-mode', 'default'],
+    settleMs: 60_000,
+  },
 ];
 
 async function runScenario(s: ProbeScenario): Promise<Array<Record<string, unknown>>> {
+  const baseArgs = ['--output-format', 'stream-json', '--input-format', 'stream-json', '--verbose'];
+  const args = s.extraArgs ? [...baseArgs, ...s.extraArgs] : baseArgs;
   const sub = spawnSubprocess({
     command: 'claude',
-    args: ['--output-format', 'stream-json', '--input-format', 'stream-json', '--verbose'],
+    args,
     cwd: PROBE_CWD,
   });
   const lines: Array<Record<string, unknown>> = [];

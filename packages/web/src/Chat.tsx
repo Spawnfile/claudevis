@@ -6,13 +6,17 @@ import { useConnection } from './store/connection.js';
 
 export function Chat({ sessionId }: { sessionId: string | null }) {
   const events = useConnection((s) => s.events);
+  const send = useConnection((s) => s.send);
   if (!sessionId)
     return <div style={{ color: '#7a8699' }}>Select a session or open a new one.</div>;
   const filtered = events.filter((e) => e.sessionId === sessionId);
+  const respond = (requestId: string, decision: 'allow' | 'deny' | 'always') => {
+    send({ type: 'permission.respond', requestId, decision });
+  };
   return (
     <div data-testid="chat">
       {filtered.map((e) => (
-        <ChatRow key={e.id} event={e} />
+        <ChatRow key={e.id} event={e} events={filtered} respond={respond} />
       ))}
     </div>
   );
@@ -30,7 +34,13 @@ const assertNever = (x: never): null => {
   return null;
 };
 
-function ChatRow({ event: e }: { event: Event }): React.JSX.Element | null {
+interface ChatRowProps {
+  event: Event;
+  events: Event[];
+  respond: (requestId: string, decision: 'allow' | 'deny' | 'always') => void;
+}
+
+function ChatRow({ event: e, events, respond }: ChatRowProps): React.JSX.Element | null {
   switch (e.type) {
     case 'user.prompt':
       return (
@@ -121,25 +131,52 @@ function ChatRow({ event: e }: { event: Event }): React.JSX.Element | null {
           </div>
         </div>
       );
-    case 'permission.requested':
+    case 'permission.requested': {
+      const isAutoDeny = e.requestId.startsWith('auto-deny-');
+      const resolution = events.find(
+        (other): other is Extract<Event, { type: 'permission.resolved' }> =>
+          other.type === 'permission.resolved' && other.requestId === e.requestId,
+      );
+      const resolved = resolution !== undefined;
       return (
-        <div className="msg permission" data-evtype="permission.requested">
-          <div className="who" style={{ color: '#d94a4a' }}>
-            🔴 Permission required: {e.toolName}
+        <div
+          className={`msg permission${!isAutoDeny && resolved ? ' resolved' : ''}${isAutoDeny ? ' auto-deny' : ''}`}
+          data-evtype="permission.requested"
+          data-request-id={e.requestId}
+        >
+          <div className="who">
+            {isAutoDeny
+              ? '🚫 Permission denied (auto)'
+              : resolved
+                ? '✓ Permission'
+                : '❓ Permission needed'}
           </div>
-          <div className="body">
-            <pre style={{ fontSize: 11, color: '#7a8699', margin: 0 }}>
-              {JSON.stringify(e.toolInput, null, 2)}
-            </pre>
-          </div>
+          <div className="permission-tool">{e.toolName}</div>
+          <pre className="permission-input">{JSON.stringify(e.toolInput, null, 2)}</pre>
+          {isAutoDeny ? (
+            <div className="permission-resolution">
+              auto-denied — claude requires interactive consent (TTY mode); see README
+            </div>
+          ) : resolved ? (
+            <div className="permission-resolution">resolved: {resolution.decision}</div>
+          ) : (
+            <div className="permission-actions">
+              <button type="button" onClick={() => respond(e.requestId, 'allow')}>
+                Allow
+              </button>
+              <button type="button" onClick={() => respond(e.requestId, 'deny')}>
+                Deny
+              </button>
+              <button type="button" onClick={() => respond(e.requestId, 'always')}>
+                Always
+              </button>
+            </div>
+          )}
         </div>
       );
+    }
     case 'permission.resolved':
-      return (
-        <div className="msg permission" data-evtype="permission.resolved">
-          <div className="who">Permission: {e.decision}</div>
-        </div>
-      );
+      return null;
     case 'skill.invoked':
       return (
         <div className="msg skill" data-evtype="skill.invoked">

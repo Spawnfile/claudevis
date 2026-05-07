@@ -13,6 +13,16 @@ export interface SessionManager {
   interrupt(sessionId: string): Promise<void>;
   clear(sessionId: string): Promise<void>;
   kill(sessionId: string): Promise<void>;
+  /**
+   * Routes a permission decision back to the originating subprocess.
+   * Throws if the requestId is not currently tracked (e.g., synthesized
+   * auto-deny IDs are not tracked because nothing can respond to them).
+   * Caller (WS server) should catch and surface as a recoverable error Event.
+   */
+  respondToPermission(opts: {
+    requestId: string;
+    decision: 'allow' | 'deny' | 'always';
+  }): Promise<void>;
   list(): string[];
   shutdown(): Promise<void>;
 }
@@ -41,11 +51,32 @@ const newEventId = () => `ev-${randomUUID().slice(0, 12)}`;
 export function createSessionManager(opts: SessionManagerOptions): SessionManager {
   const sessions = new Map<string, SessionState>();
 
+  // requestId → sessionId lookup so permission.respond Commands can route to
+  // the right subprocess. Populated by the emit hook below ONLY for non-
+  // synthesized requestIds (synthesized "auto-deny-*" IDs from real-mode
+  // parser have nothing to respond to — claude already denied at end of turn).
+  // Cleaned up on session.kill / session.clear / session.ended.
+  const pendingPermissions = new Map<string, string>();
+
+  const cleanupPermissionsForSession = (sessionId: string) => {
+    for (const [requestId, sid] of pendingPermissions) {
+      if (sid === sessionId) pendingPermissions.delete(requestId);
+    }
+  };
+
   const emit = (e: Event) => {
     if (process.env.CLAUDEVIS_DEBUG === '1') {
       console.log(`[claudevis] emit type=${e.type} sessionId=${e.sessionId}`);
     }
     opts.store.append(e);
+    // Track only non-synthesized permission requests. Real-mode auto-deny
+    // synthesis (T2) emits requestIds with an "auto-deny-" prefix; those
+    // have nothing to respond to and are skipped here.
+    if (e.type === 'permission.requested' && !e.requestId.startsWith('auto-deny-')) {
+      pendingPermissions.set(e.requestId, e.sessionId);
+    } else if (e.type === 'permission.resolved') {
+      pendingPermissions.delete(e.requestId);
+    }
     opts.onEvent(e);
   };
 
@@ -230,6 +261,8 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
         exitCode: code ?? undefined,
       });
       sessions.delete(state.id);
+      // Cleanup dangling permission requests for this session.
+      cleanupPermissionsForSession(state.id);
     });
   };
 
@@ -360,6 +393,7 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
     clear: async (sessionId) => {
       const s = sessions.get(sessionId);
       if (!s) throw new Error(`no session ${sessionId}`);
+      cleanupPermissionsForSession(sessionId);
       // For walking skeleton we model `/clear` as sending the literal text.
       // Real-claude integration in M2 will use the proper SDK semantics.
       s.sub.write({ type: 'user.prompt', content: '/clear' });
@@ -367,12 +401,35 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
     kill: async (sessionId) => {
       const s = sessions.get(sessionId);
       if (!s) return;
+      cleanupPermissionsForSession(sessionId);
       await s.sub.close();
+    },
+    respondToPermission: async ({ requestId, decision }) => {
+      const sessionId = pendingPermissions.get(requestId);
+      if (!sessionId) {
+        throw new Error(`no pending permission for requestId ${requestId}`);
+      }
+      const s = sessions.get(sessionId);
+      if (!s) {
+        pendingPermissions.delete(requestId);
+        throw new Error(`no session ${sessionId}`);
+      }
+      // Write a stream-json line to the subprocess stdin. The fake fixture (T7)
+      // will read these and emit a matching permission.resolved Event. In real
+      // mode this path is unreachable for synthesized auto-deny-* IDs (filtered
+      // out by the emit hook above), so this is effectively fake-mode-only.
+      s.sub.write({
+        type: 'permission_response',
+        request_id: requestId,
+        decision,
+      });
+      pendingPermissions.delete(requestId);
     },
     list: () => Array.from(sessions.keys()),
     shutdown: async () => {
       await Promise.all(Array.from(sessions.values()).map((s) => s.sub.close()));
       sessions.clear();
+      pendingPermissions.clear();
     },
   };
 }

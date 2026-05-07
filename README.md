@@ -94,11 +94,27 @@ supports. In real mode you will see: `session.started`,
 `agent.message`, `agent.thinking`, `tool.started`, `tool.completed`,
 `subagent.dispatched`, `subagent.completed`, `file.changed`,
 `tokens.updated`, `error`, plus the locally-emitted `user.prompt`,
-`interrupt.signaled`, `session.ended`. In fake mode you additionally
-see: `skill.invoked`, `permission.requested`, `permission.resolved`,
-`session.idle`, `session.mode.changed` &mdash; the fake fixture emits
-these so the frontend's exhaustive event renderer stays exercised.
-M3b will move the first three (permissions + skill) into real mode too.
+`interrupt.signaled`, `session.ended`. M3b.1 also synthesizes
+`permission.requested` + `permission.resolved` from the
+`permission_denials[]` array on the final `result` line — these
+arrive AFTER the failed tool, with a `requestId` prefixed
+`auto-deny-` and `decision: 'deny'`. The UI renders them as a
+read-only red "🚫 Permission denied (auto)" card. Stream-json mode
+does not carry interactive permission consent; true Allow/Deny/Always
+round-trip is fake-mode only and waits for a future milestone (likely
+via an MCP permission proxy). In fake mode you additionally see:
+`skill.invoked`, `session.idle`, `session.mode.changed` &mdash; the
+fake fixture emits these so the frontend's exhaustive event renderer
+stays exercised. The fake fixture also emits a full interactive
+permission round-trip on the `/permission-test` sentinel prompt
+(mustard pending card → click Allow/Deny/Always → green resolved
+card) so developers can iterate on the UI without API spend.
+
+**Cost-discipline note:** real-mode probes (gated tests under
+`CLAUDEVIS_RUN_REAL=1`) should pin `--model sonnet` in their spawn
+args to keep API spend predictable. Higher-tier models can be
+significantly more expensive per call, especially with extended
+context windows.
 
 ## Tests
 
