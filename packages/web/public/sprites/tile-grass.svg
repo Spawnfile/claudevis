@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 32">
+  <!-- Iso diamond: top, right, bottom, left -->
+  <polygon points="32,0 64,16 32,32 0,16" fill="#1f3a2c" stroke="#0e1f17" stroke-width="1"/>
+  <!-- Subtle tile lines (4 thin diagonals like landing) -->
+  <line x1="13" y1="6" x2="45" y2="22" stroke="#152c20" stroke-width="0.5" opacity="0.7"/>
+  <line x1="19" y1="3" x2="51" y2="19" stroke="#152c20" stroke-width="0.5" opacity="0.7"/>
+  <line x1="51" y1="6" x2="19" y2="22" stroke="#152c20" stroke-width="0.5" opacity="0.7"/>
+  <line x1="45" y1="3" x2="13" y2="19" stroke="#152c20" stroke-width="0.5" opacity="0.7"/>
+</svg>

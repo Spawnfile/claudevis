@@ -4,6 +4,7 @@ import { PromptBar } from './PromptBar.js';
 import { RawEvents } from './RawEvents.js';
 import { SessionList } from './SessionList.js';
 import { SkillDrawer } from './SkillDrawer.js';
+import { SceneCanvas } from './scene/SceneCanvas.js';
 import { useConnection } from './store/connection.js';
 
 // Same-origin WebSocket: the page is served by Vite (or whatever bundler in
@@ -37,24 +38,31 @@ export function App() {
         <SkillDrawer />
       </div>
       <div className="main">
-        <div className="tab-bar">
-          <button
-            type="button"
-            className={view === 'chat' ? 'active' : ''}
-            onClick={() => setView('chat')}
-          >
-            Chat
-          </button>
-          <button
-            type="button"
-            className={view === 'raw' ? 'active' : ''}
-            onClick={() => setView('raw')}
-            data-testid="tab-raw"
-          >
-            Raw Events
-          </button>
+        <div className="scene-panel">
+          <SceneCanvas activeSessionId={active} />
         </div>
-        {view === 'chat' ? <Chat sessionId={active} /> : <RawEvents sessionId={active} />}
+        <div className="chat-area">
+          <div className="tab-bar">
+            <button
+              type="button"
+              className={view === 'chat' ? 'active' : ''}
+              onClick={() => setView('chat')}
+            >
+              Chat
+            </button>
+            <button
+              type="button"
+              className={view === 'raw' ? 'active' : ''}
+              onClick={() => setView('raw')}
+              data-testid="tab-raw"
+            >
+              Raw Events
+            </button>
+          </div>
+          <div className="chat-content">
+            {view === 'chat' ? <Chat sessionId={active} /> : <RawEvents sessionId={active} />}
+          </div>
+        </div>
       </div>
       <div className="bottom">
         <PromptBar sessionId={active} />

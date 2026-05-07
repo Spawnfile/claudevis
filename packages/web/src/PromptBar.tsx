@@ -25,9 +25,7 @@ export function PromptBar({ sessionId }: { sessionId: string | null }) {
 
   return (
     <>
-      <div style={{ fontSize: 11, color: '#7a8699', whiteSpace: 'nowrap' }}>
-        {sessionId ? `→ ${sessionId}` : 'No session'}
-      </div>
+      <div className="prompt-session-indicator">{sessionId ? `→ ${sessionId}` : 'No session'}</div>
       <input
         className="prompt"
         value={text}

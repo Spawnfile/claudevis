@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 44 40">
+  <!-- Roof above crossbeam -->
+  <polygon points="8,0 36,0 34,4 10,4" fill="#5a3a2e"/>
+  <!-- Crossbeam (horizontal) -->
+  <rect x="10" y="1" width="24" height="3" fill="#3a3024"/>
+  <!-- Vertical post -->
+  <rect x="20" y="2" width="4" height="22" fill="#3a3024"/>
+  <!-- Outer rim (octagonal stepped polygon) -->
+  <polygon points="14,24 30,24 38,28 38,32 30,36 14,36 6,32 6,28" fill="#2a2330"/>
+  <!-- Inner rim shadow -->
+  <polygon points="16,26 28,26 34,29 34,31 28,34 16,34 10,31 10,29" fill="#1d1a26"/>
+  <!-- Water (deepest) -->
+  <polygon points="18,28 26,28 30,30 26,32 18,32 14,30" fill="#0a0a14"/>
+</svg>

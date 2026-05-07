@@ -1,4 +1,5 @@
 import type { Command, Event, ResumableSession, ServerFrame, SkillEntry } from '@claudevis/shared';
+import { useEffect, useRef } from 'react';
 import { create } from 'zustand';
 
 interface ConnectionState {
@@ -112,3 +113,19 @@ export const useConnection = create<ConnectionState>((set, get) => ({
       resumable: [],
     }),
 }));
+
+/**
+ * Subscribe to event-array deltas. The callback receives (events, lastIndex)
+ * each render and is responsible for processing only events[lastIndex..].
+ * Returns the new lastIndex. Used by SceneCanvas to apply deltas.
+ */
+export function useEventStream(cb: (events: Event[], lastIndex: number) => number): void {
+  const events = useConnection((s) => s.events);
+  const lastIndexRef = useRef(0);
+
+  useEffect(() => {
+    if (events.length > lastIndexRef.current) {
+      lastIndexRef.current = cb(events, lastIndexRef.current);
+    }
+  }, [events, cb]);
+}

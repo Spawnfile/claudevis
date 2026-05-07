@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 56">
+  <!-- Base -->
+  <polygon points="0,18 20,30 20,54 0,42" fill="#3d3a4a"/>
+  <polygon points="20,30 40,18 40,42 20,54" fill="#2d2a37"/>
+  <polygon points="0,18 20,6 40,18 20,30" fill="#4a4658"/>
+  <!-- Roof -->
+  <polygon points="-2,18 20,2 42,18 20,34" fill="#5a3a2e"/>
+  <polygon points="20,34 42,18 42,22 20,38" fill="#3e2a22" opacity="0.7"/>
+  <!-- Window glows (lantern-style amber rectangles) -->
+  <rect x="7" y="24" width="7" height="7" fill="#ffd97a"/>
+  <rect x="25" y="24" width="7" height="7" fill="#ffd97a"/>
+  <!-- Chimney -->
+  <rect x="28" y="8" width="4" height="6" fill="#2a2330"/>
+</svg>

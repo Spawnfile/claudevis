@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 24">
+  <!-- Shadow on ground -->
+  <rect x="3" y="22" width="10" height="2" fill="#000000" opacity="0.4"/>
+  <!-- Legs (dark brown, literal landing color) -->
+  <rect x="3" y="18" width="3" height="4" fill="#3a2a1f"/>
+  <rect x="10" y="18" width="3" height="4" fill="#3a2a1f"/>
+  <!-- Head (skin tone, literal landing color) -->
+  <rect x="4" y="0" width="8" height="7" fill="#d4a87a"/>
+  <!-- Body region (rows 7-17, x 2-14) intentionally empty — drawn at runtime
+       via PIXI.Graphics so per-model tint colors are exact, not multiplied. -->
+</svg>

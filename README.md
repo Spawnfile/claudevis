@@ -179,13 +179,29 @@ claudevis/
 └── README.md
 ```
 
+### Scene panel (M3c.1)
+
+The web UI shows an isometric scene panel above the chat lane. Each active
+session is rendered as a model-tinted villager NPC standing on a grass tile.
+A cumulative-USD stamina bar (5 log-scale segments at $0.10 / $0.20 / $0.40
+/ $0.80 / $1.60) sits above each NPC and updates from `tokens.updated` events.
+
+Layout: SessionList sidebar | Scene + Chat (split vertically) | PromptBar at
+the bottom. Theme is locked to the landing site's moonlit palette (deep
+indigo / torch amber / ember red / parchment cream) with Cinzel serif
+headings, Inter Tight body, and JetBrains Mono code/labels.
+
+Subsequent M3c sub-milestones add the full scene grammar (subagent dispatch,
+permission sigils, file-fly glyphs, lore-locked tool icons) and animations.
+
 ## Status
 
 - [x] M1 &mdash; Walking skeleton
 - [x] M2 &mdash; Real-CLI integration with stream-json line parser
 - [x] M3a &mdash; Subagent + file.changed synthesis, model dropdown, markdown rendering
 - [x] M3b &mdash; Permission round-trip, skill drawer, `--resume` discovery
-- [ ] M3c &mdash; Isometric pixel-art rendering (PixiJS or alternative)
+- [x] M3c.1 &mdash; Isometric scene panel — PixiJS canvas, NPC spawn/stamina, moonlit theme
+- [ ] M3c.2+ &mdash; Full scene grammar (subagent NPCs, sigils, glyphs, tool icons, animations)
 - [ ] M4 &mdash; `claude login` OAuth, OBS broadcast mode, session persistence
 
 ## Disclaimer

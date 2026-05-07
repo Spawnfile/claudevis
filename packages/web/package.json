@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@claudevis/shared": "workspace:*",
+    "pixi.js": "8.6.6",
     "react": "19.0.0",
     "react-dom": "19.0.0",
     "react-markdown": "^9.1.0",
