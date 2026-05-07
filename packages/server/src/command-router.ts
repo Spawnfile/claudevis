@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { Command, ServerFrame } from '@claudevis/shared';
+import type { Command, ServerFrame, SkillEntry } from '@claudevis/shared';
 import type { EventStore } from './event-store.js';
 import type { SessionManager } from './session-manager.js';
 
@@ -15,6 +15,12 @@ export interface CommandRouterDeps {
     'create' | 'send' | 'interrupt' | 'clear' | 'kill' | 'respondToPermission'
   >;
   store: Pick<EventStore, 'all' | 'bySession'>;
+  /**
+   * M3b.2: returns the most recently broadcast catalog so subscribe can
+   * replay it for late-connecting clients. Returns null when no system/init
+   * has produced a catalog yet.
+   */
+  getCatalog: () => SkillEntry[] | null;
 }
 
 export type CommandHandler = (cmd: Command, send: (frame: ServerFrame) => void) => Promise<void>;
@@ -39,7 +45,7 @@ const protocolErrorEvent = (message: string): ServerFrame => ({
  * SessionManager and EventStore.
  */
 export function createCommandRouter(deps: CommandRouterDeps): CommandHandler {
-  const { mgr, store } = deps;
+  const { mgr, store, getCatalog } = deps;
   return async (cmd, send) => {
     switch (cmd.type) {
       case 'session.create':
@@ -65,6 +71,15 @@ export function createCommandRouter(deps: CommandRouterDeps): CommandHandler {
               ? store.all()
               : cmd.sessionIds.flatMap((sid) => store.bySession(sid));
           for (const ev of events) send({ type: 'event', event: ev });
+        }
+        // M3b.2: replay the most recent catalog so late-connecting clients
+        // see the skill drawer populated immediately. Sent BEFORE replay.done
+        // so the client can render the drawer in the same sync barrier as
+        // the event history. Skipped when no system/init has produced a
+        // catalog yet (e.g. server just started, no sessions created).
+        const catalog = getCatalog();
+        if (catalog !== null) {
+          send({ type: 'skill.catalog', skills: catalog });
         }
         send({ type: 'replay.done' });
         return;

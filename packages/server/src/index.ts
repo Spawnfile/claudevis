@@ -1,4 +1,4 @@
-import type { Event, ServerFrame } from '@claudevis/shared';
+import type { Event, ServerFrame, SkillEntry } from '@claudevis/shared';
 import { createCommandRouter } from './command-router.js';
 import { createEventStore } from './event-store.js';
 import { createSessionManager } from './session-manager.js';
@@ -52,9 +52,29 @@ const store = createEventStore({ kind: 'sqlite', path: DB_PATH });
 let serverRef: { broadcast: (f: ServerFrame) => void } | null = null;
 const onEvent = (e: Event) => serverRef?.broadcast({ type: 'event', event: e });
 
-const mgr = createSessionManager({ store, onEvent, claudeCommand, mode: fake ? 'fake' : 'real' });
+// M3b.2: cache the most recently broadcast catalog so late-connecting clients
+// can have it replayed on subscribe. The catalog is global (not per-session)
+// because Claude reports the same skill set across all sessions started from
+// the same workspace; the SessionManager re-emits it on every system/init.
+let lastCatalog: SkillEntry[] | null = null;
+const onCatalog = (skills: SkillEntry[]) => {
+  lastCatalog = skills;
+  serverRef?.broadcast({ type: 'skill.catalog', skills });
+};
 
-const onCommand = createCommandRouter({ mgr, store });
+const mgr = createSessionManager({
+  store,
+  onEvent,
+  claudeCommand,
+  mode: fake ? 'fake' : 'real',
+  onCatalog,
+});
+
+const onCommand = createCommandRouter({
+  mgr,
+  store,
+  getCatalog: () => lastCatalog,
+});
 
 const server = await startWsServer({
   port: PORT,

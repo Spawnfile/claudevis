@@ -102,13 +102,19 @@ arrive AFTER the failed tool, with a `requestId` prefixed
 read-only red "🚫 Permission denied (auto)" card. Stream-json mode
 does not carry interactive permission consent; true Allow/Deny/Always
 round-trip is fake-mode only and waits for a future milestone (likely
-via an MCP permission proxy). In fake mode you additionally see:
-`skill.invoked`, `session.idle`, `session.mode.changed` &mdash; the
-fake fixture emits these so the frontend's exhaustive event renderer
-stays exercised. The fake fixture also emits a full interactive
-permission round-trip on the `/permission-test` sentinel prompt
-(mustard pending card → click Allow/Deny/Always → green resolved
-card) so developers can iterate on the UI without API spend.
+via an MCP permission proxy). M3b.2 added the skill drawer: claude's `system/init` payload feeds a
+toggleable sidebar listing every available skill, slash command, and
+agent (names only — descriptions and paths wait for a future
+filesystem-scan milestone). Clicking an entry prepends `/<name> `
+into the prompt input; sending the prompt fires `skill.invoked`
+before `user.prompt`. Both real and fake modes participate. In fake
+mode you additionally see `session.idle` and `session.mode.changed`
+&mdash; the fake fixture emits these so the frontend's exhaustive
+event renderer stays exercised. The fake fixture also emits a full
+interactive permission round-trip on the `/permission-test` sentinel
+prompt (mustard pending card → click Allow/Deny/Always → green
+resolved card) and a hardcoded test catalog at startup so developers
+can iterate on the drawer UI without API spend.
 
 **Cost-discipline note:** real-mode probes (gated tests under
 `CLAUDEVIS_RUN_REAL=1`) should pin `--model sonnet` in their spawn

@@ -102,3 +102,95 @@ test('permission round-trip via /permission-test sentinel', async ({ page }) => 
   await expect(page.locator('.permission-resolution')).toContainText('allow');
   await expect(card.locator('button:has-text("Allow")')).toHaveCount(0);
 });
+
+test('skill drawer renders catalog and click prepends to prompt + skill.invoked fires', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await expect(page.getByText('● connected')).toBeVisible({ timeout: 10_000 });
+
+  // Create a fake-mode session — fake fixture emits system/init at startup
+  // → server broadcasts skill.catalog → frontend store populates catalog.
+  await createSession(page);
+
+  // Open the skill drawer.
+  const toggle = page.locator('.skill-drawer-toggle');
+  await expect(toggle).toBeVisible({ timeout: 5_000 });
+  await toggle.click();
+
+  // Scope DOM lookups to the drawer body — prior fake-mode tests in the
+  // same dev-server process may have left chat history matching these texts.
+  const drawer = page.locator('.skill-drawer-body');
+
+  // Three section headings render (catalog has 1 of each kind).
+  await expect(drawer.getByRole('heading', { name: /slash commands/i })).toBeVisible();
+  await expect(drawer.getByRole('heading', { name: /^skills$/i })).toBeVisible();
+  await expect(drawer.getByRole('heading', { name: /agents/i })).toBeVisible();
+
+  // Hardcoded fixture entries appear.
+  const skillEntry = drawer.locator('.skill-drawer-entry-button', {
+    hasText: 'plugin-a:test-skill',
+  });
+  await expect(skillEntry).toBeVisible();
+  await expect(
+    drawer.locator('.skill-drawer-entry-button', { hasText: 'plugin-a:test-cmd' }),
+  ).toBeVisible();
+  await expect(
+    drawer.locator('.skill-drawer-entry-button', { hasText: 'test-agent' }),
+  ).toBeVisible();
+
+  // Click the skill entry — pendingPromptPrefix → PromptBar input prepend.
+  await skillEntry.click();
+
+  // Prompt input now starts with "/plugin-a:test-skill ".
+  const promptInput = page.getByPlaceholder('Type a prompt...');
+  await expect(promptInput).toHaveValue(/^\/plugin-a:test-skill /);
+
+  // Type some args after the prefix and send (Enter key, matching M3b.1's pattern).
+  await promptInput.press('End');
+  await promptInput.type('with these args');
+  await promptInput.press('Enter');
+
+  // skill.invoked Event row arrives in chat BEFORE user.prompt row.
+  await expect(page.locator('[data-evtype="skill.invoked"]')).toBeVisible({ timeout: 5_000 });
+});
+
+test('skill drawer filter narrows visible entries', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.getByText('● connected')).toBeVisible({ timeout: 10_000 });
+
+  await createSession(page);
+
+  await page.locator('.skill-drawer-toggle').click();
+
+  // Scope selectors to the drawer body — chat history from prior tests in
+  // the same dev-server process may also contain "plugin-a:test-skill".
+  const drawer = page.locator('.skill-drawer-body');
+
+  // All three entries visible initially (scoped to drawer entry buttons).
+  await expect(
+    drawer.locator('.skill-drawer-entry-button', { hasText: 'plugin-a:test-skill' }),
+  ).toBeVisible();
+  await expect(
+    drawer.locator('.skill-drawer-entry-button', { hasText: 'test-agent' }),
+  ).toBeVisible();
+
+  // Filter to a string that matches only test-skill.
+  const filter = page.getByPlaceholder(/filter by name/i);
+  await filter.fill('test-skill');
+  await expect(
+    drawer.locator('.skill-drawer-entry-button', { hasText: 'plugin-a:test-skill' }),
+  ).toBeVisible();
+  await expect(drawer.locator('.skill-drawer-entry-button', { hasText: 'test-agent' })).toHaveCount(
+    0,
+  );
+
+  // Clear filter — both visible again.
+  await filter.fill('');
+  await expect(
+    drawer.locator('.skill-drawer-entry-button', { hasText: 'plugin-a:test-skill' }),
+  ).toBeVisible();
+  await expect(
+    drawer.locator('.skill-drawer-entry-button', { hasText: 'test-agent' }),
+  ).toBeVisible();
+});

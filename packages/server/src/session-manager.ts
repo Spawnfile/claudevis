@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import type { Event } from '@claudevis/shared';
+import type { Event, SkillEntry } from '@claudevis/shared';
+import { buildSkillEntries, extractInvokableNames } from './catalog.js';
 import type { EventStore } from './event-store.js';
 import { detectGitInfo } from './git-info.js';
 import { type ParserContext, createRealCliParser } from './real-claude-parser.js';
@@ -33,6 +34,12 @@ export interface SessionManagerOptions {
   claudeCommand: { command: string; baseArgs: string[] };
   /** 'real' parses claude stream-json; 'fake' passes through fixture lines. */
   mode: 'fake' | 'real';
+  /**
+   * M3b.2: called with the freshly-built SkillEntry[] whenever a session's
+   * system/init line yields a catalog. WS server uses this to broadcast a
+   * skill.catalog ServerFrame to all clients. Optional.
+   */
+  onCatalog?: (skills: SkillEntry[]) => void;
 }
 
 interface SessionState {
@@ -43,6 +50,12 @@ interface SessionState {
   model: string;
   repo?: string;
   branch?: string;
+  /**
+   * M3b.2: set populated from system/init catalog. Used in `send` to detect
+   * /-prefix prompts that match a known skill/slash_command/agent and emit
+   * skill.invoked before user.prompt.
+   */
+  knownInvokableNames: Set<string>;
 }
 
 const newId = () => `sess-${randomUUID().slice(0, 8)}`;
@@ -236,6 +249,26 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
         });
         return;
       }
+      case 'system': {
+        // M3b.2: fake fixture emits a system/init-shaped line at startup
+        // carrying a hardcoded test catalog. Mirror the real-mode catalog
+        // flow: build SkillEntry[], update knownInvokableNames, forward to
+        // opts.onCatalog. Other system subtypes (hook_started, hook_response,
+        // etc.) are silently accepted — informational, no Event emission.
+        if (line.subtype === 'init') {
+          const entries = buildSkillEntries({
+            skills: Array.isArray(line.skills) ? line.skills : [],
+            slash_commands: Array.isArray(line.slash_commands) ? line.slash_commands : [],
+            agents: Array.isArray(line.agents) ? line.agents : [],
+            plugins: Array.isArray(line.plugins)
+              ? (line.plugins as Array<Record<string, unknown>>)
+              : [],
+          });
+          state.knownInvokableNames = extractInvokableNames(entries);
+          opts.onCatalog?.(entries);
+        }
+        return;
+      }
       default: {
         // Unknown line — surface as a recoverable error so it's visible in
         // the UI rather than silently dropped. M2's real-claude parser
@@ -281,6 +314,7 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
         model: resolvedModel,
         repo: git.repo,
         branch: git.branch,
+        knownInvokableNames: new Set<string>(),
         // sub is filled in immediately below — declared here for type safety.
         // biome-ignore lint/suspicious/noExplicitAny: hole filled synchronously
         sub: undefined as any,
@@ -302,6 +336,18 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
           // without waiting for SessionStart hooks (which can take several
           // seconds before the delayed `system/init` line lands).
           emitSessionStartedFromInit: false,
+          onCatalog: (raw) => {
+            const entries = buildSkillEntries({
+              skills: Array.isArray(raw.skills) ? raw.skills : [],
+              slash_commands: Array.isArray(raw.slash_commands) ? raw.slash_commands : [],
+              agents: Array.isArray(raw.agents) ? raw.agents : [],
+              plugins: Array.isArray(raw.plugins)
+                ? (raw.plugins as Array<Record<string, unknown>>)
+                : [],
+            });
+            state.knownInvokableNames = extractInvokableNames(entries);
+            opts.onCatalog?.(entries);
+          },
         };
         const parse = createRealCliParser(parserCtx);
         lineHandler = (raw) => {
@@ -366,6 +412,28 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
     send: async ({ sessionId, content }) => {
       const s = sessions.get(sessionId);
       if (!s) throw new Error(`no session ${sessionId}`);
+      // M3b.2: when the prompt's first whitespace-delimited token after a
+      // leading / matches a known catalog name, emit skill.invoked BEFORE
+      // user.prompt so the chat narrative shows the invocation as a distinct
+      // row. The catalog is populated from system/init; if it's empty (e.g.
+      // session just started), no skill.invoked fires and the prompt passes
+      // through normally.
+      const trimmed = content.trimStart();
+      if (trimmed.startsWith('/')) {
+        const space = trimmed.indexOf(' ');
+        const slashName = space === -1 ? trimmed.slice(1) : trimmed.slice(1, space);
+        const args = space === -1 ? undefined : trimmed.slice(space + 1);
+        if (s.knownInvokableNames.has(slashName)) {
+          emit({
+            id: newEventId(),
+            ts: Date.now(),
+            sessionId,
+            type: 'skill.invoked',
+            skillName: slashName,
+            args,
+          });
+        }
+      }
       emit({
         id: newEventId(),
         ts: Date.now(),

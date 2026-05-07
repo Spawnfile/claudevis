@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import type { Event, ServerFrame } from '@claudevis/shared';
+import type { Event, ServerFrame, SkillEntry } from '@claudevis/shared';
 import WebSocket from 'ws';
 import { type CommandRouterDeps, createCommandRouter } from '../src/command-router.js';
 import { type WsServer, startWsServer } from '../src/ws-server.js';
@@ -62,8 +62,18 @@ const emptyStore: CommandRouterDeps['store'] = {
   bySession: () => [] as Event[],
 };
 
-async function startTestServer(deps: CommandRouterDeps): Promise<TestServer> {
-  const onCommand = createCommandRouter(deps);
+// `getCatalog` is required on CommandRouterDeps (M3b.2) but most tests don't
+// care about it. Accept a partial here and default to () => null so existing
+// callers can keep passing { mgr, store } without churn.
+type TestServerDeps = Omit<CommandRouterDeps, 'getCatalog'> &
+  Partial<Pick<CommandRouterDeps, 'getCatalog'>>;
+
+async function startTestServer(deps: TestServerDeps): Promise<TestServer> {
+  const onCommand = createCommandRouter({
+    mgr: deps.mgr,
+    store: deps.store,
+    getCatalog: deps.getCatalog ?? (() => null),
+  });
   const wsServer = await startWsServer({ port: 0, onCommand });
   const ws = new WebSocket(`ws://127.0.0.1:${wsServer.port}/v1`);
   const frames: ServerFrame[] = [];
@@ -80,6 +90,18 @@ async function startTestServer(deps: CommandRouterDeps): Promise<TestServer> {
       await wsServer.close();
     },
   };
+}
+
+// Poll until at least `count` non-hello frames have arrived (the WS server
+// sends a hello frame on open, which we don't want to count toward replay
+// barriers). Times out at 1s to keep failures fast.
+async function waitForFrames(frames: ServerFrame[], count: number): Promise<void> {
+  const deadline = Date.now() + 1000;
+  while (Date.now() < deadline) {
+    const nonHello = frames.filter((f) => f.type !== 'hello').length;
+    if (nonHello >= count) return;
+    await new Promise((r) => setTimeout(r, 10));
+  }
 }
 
 describe('permission.respond Command routing', () => {
@@ -125,6 +147,94 @@ describe('permission.respond Command routing', () => {
         expect(errorFrame.event.recoverable).toBe(true);
         expect(errorFrame.event.sessionId).toBe('_protocol');
       }
+    } finally {
+      await t.close();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// skill.catalog ServerFrame routing — T5 of M3b.2.
+//
+// On subscribe, the server replays the most recently broadcast catalog
+// BEFORE replay.done so late-connecting clients can render the skill drawer
+// in the same sync barrier as the event history. When no catalog has been
+// observed yet (e.g. server just started, no system/init), the frame is
+// simply omitted.
+// ---------------------------------------------------------------------------
+
+describe('skill.catalog ServerFrame routing', () => {
+  it('subscribe replays the most recent catalog (if any) BEFORE replay.done', async () => {
+    const cachedCatalog: SkillEntry[] = [
+      { name: 'cached-skill', description: '', source: 'user', path: '', kind: 'skill' },
+    ];
+    const mgr = buildMgr({ respondToPermission: async () => {} });
+    const t = await startTestServer({
+      mgr,
+      store: emptyStore,
+      getCatalog: () => cachedCatalog,
+    });
+    try {
+      t.send({ type: 'subscribe', sessionIds: '*', replay: true });
+      // hello + skill.catalog + replay.done = 3 frames; wait for the two
+      // non-hello frames.
+      await waitForFrames(t.frames, 2);
+
+      const catFrame = t.frames.find((f) => f.type === 'skill.catalog');
+      const doneFrame = t.frames.find((f) => f.type === 'replay.done');
+      expect(catFrame).toBeDefined();
+      expect(doneFrame).toBeDefined();
+      if (catFrame?.type === 'skill.catalog') {
+        expect(catFrame.skills[0]?.name).toBe('cached-skill');
+      }
+
+      // skill.catalog must arrive BEFORE replay.done so the client renders
+      // the drawer in the same sync cycle as the event history.
+      const catIdx = t.frames.findIndex((f) => f.type === 'skill.catalog');
+      const doneIdx = t.frames.findIndex((f) => f.type === 'replay.done');
+      expect(catIdx).toBeLessThan(doneIdx);
+    } finally {
+      await t.close();
+    }
+  });
+
+  it('subscribe does NOT send a skill.catalog frame when no catalog has been broadcast', async () => {
+    const mgr = buildMgr({ respondToPermission: async () => {} });
+    const t = await startTestServer({
+      mgr,
+      store: emptyStore,
+      getCatalog: () => null,
+    });
+    try {
+      t.send({ type: 'subscribe', sessionIds: '*', replay: false });
+      await waitForFrames(t.frames, 1);
+
+      const catFrame = t.frames.find((f) => f.type === 'skill.catalog');
+      expect(catFrame).toBeUndefined();
+
+      const doneFrame = t.frames.find((f) => f.type === 'replay.done');
+      expect(doneFrame).toBeDefined();
+    } finally {
+      await t.close();
+    }
+  });
+
+  it('subscribe with replay:false still replays catalog (catalog is global, not event-tied)', async () => {
+    const cachedCatalog: SkillEntry[] = [
+      { name: 'g', description: '', source: 'user', path: '', kind: 'skill' },
+    ];
+    const mgr = buildMgr({ respondToPermission: async () => {} });
+    const t = await startTestServer({
+      mgr,
+      store: emptyStore,
+      getCatalog: () => cachedCatalog,
+    });
+    try {
+      t.send({ type: 'subscribe', sessionIds: '*', replay: false });
+      await waitForFrames(t.frames, 2);
+
+      expect(t.frames.find((f) => f.type === 'skill.catalog')).toBeDefined();
+      expect(t.frames.find((f) => f.type === 'replay.done')).toBeDefined();
     } finally {
       await t.close();
     }

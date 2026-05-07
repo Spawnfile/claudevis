@@ -3,6 +3,7 @@ import { Chat } from './Chat.js';
 import { PromptBar } from './PromptBar.js';
 import { RawEvents } from './RawEvents.js';
 import { SessionList } from './SessionList.js';
+import { SkillDrawer } from './SkillDrawer.js';
 import { useConnection } from './store/connection.js';
 
 // Same-origin WebSocket: the page is served by Vite (or whatever bundler in
@@ -33,6 +34,7 @@ export function App() {
           {connected ? '● connected' : '● disconnected'}
         </div>
         <SessionList activeSessionId={active} onSelect={setActive} />
+        <SkillDrawer />
       </div>
       <div className="main">
         <div className="tab-bar">

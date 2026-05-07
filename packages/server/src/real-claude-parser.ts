@@ -35,6 +35,15 @@ export interface ParserContext {
    * delayed `system/init` line that follows them.
    */
   emitSessionStartedFromInit?: boolean;
+  /**
+   * Called with the raw system/init line body whenever the parser sees a
+   * `{type:"system",subtype:"init"}` line. SessionManager uses this to
+   * build the per-session SkillEntry[] and broadcast a skill.catalog
+   * ServerFrame. Optional — when undefined, system/init still produces a
+   * session.started Event the same way as M3a (subject to the
+   * emitSessionStartedFromInit latch).
+   */
+  onCatalog?: (raw: Record<string, unknown>) => void;
 }
 
 export type RealCliLineParser = (raw: unknown) => Event[];
@@ -53,7 +62,13 @@ export function createRealCliParser(ctx: ParserContext): RealCliLineParser {
     if (typeof line.type !== 'string') return [];
 
     if (line.type === 'system') {
-      if (line.subtype === 'init' && !sessionStartedEmitted) {
+      if (line.subtype === 'init') {
+        // M3b.2: hand the full init payload to SessionManager so it can build
+        // and broadcast the skill catalog. Invoke even on subsequent init lines
+        // (theoretical: a future mode change might re-emit init); the catalog
+        // callback fires every time so the drawer reflects the latest state.
+        if (ctx.onCatalog) ctx.onCatalog(line);
+        if (sessionStartedEmitted) return [];
         sessionStartedEmitted = true;
         // When SessionManager emits session.started proactively (real-mode
         // default), the parser only acks the latch and stays silent so the UI

@@ -859,3 +859,109 @@ describe('createRealCliParser — fixture replay', () => {
     });
   }
 });
+
+describe('createRealCliParser — catalog side-channel', () => {
+  it('invokes onCatalog with the raw line when system/init carries catalog arrays', () => {
+    const captured: Record<string, unknown>[] = [];
+    const ctx: ParserContext = {
+      ...freshCtx(),
+      onCatalog: (raw: Record<string, unknown>) => {
+        captured.push(raw);
+      },
+    };
+    const parse = createRealCliParser(ctx);
+    parse({
+      type: 'system',
+      subtype: 'init',
+      skills: ['my-skill'],
+      slash_commands: ['my-cmd'],
+      agents: ['my-agent'],
+      plugins: [{ name: 'plugin-a', path: '/p', source: 'official' }],
+    });
+    expect(captured).toHaveLength(1);
+    expect(captured[0]?.skills).toEqual(['my-skill']);
+    expect(captured[0]?.slash_commands).toEqual(['my-cmd']);
+    expect(captured[0]?.agents).toEqual(['my-agent']);
+    expect(Array.isArray(captured[0]?.plugins)).toBe(true);
+  });
+
+  it('does NOT invoke onCatalog for non-init system lines', () => {
+    const captured: unknown[] = [];
+    const ctx: ParserContext = {
+      ...freshCtx(),
+      onCatalog: () => captured.push(1),
+    };
+    const parse = createRealCliParser(ctx);
+    parse({ type: 'system', subtype: 'hook_started' });
+    parse({ type: 'system', subtype: 'hook_response' });
+    expect(captured).toHaveLength(0);
+  });
+
+  it('still emits session.started when onCatalog is provided AND emitSessionStartedFromInit is not false', () => {
+    const ctx: ParserContext = {
+      ...freshCtx(),
+      onCatalog: () => {},
+    };
+    const parse = createRealCliParser(ctx);
+    const events = parse({
+      type: 'system',
+      subtype: 'init',
+      skills: [],
+      slash_commands: [],
+      agents: [],
+      plugins: [],
+    });
+    expect(events.find((e) => e.type === 'session.started')).toBeDefined();
+  });
+
+  it('invokes onCatalog even when emitSessionStartedFromInit is false (no Event emission)', () => {
+    const captured: unknown[] = [];
+    const ctx: ParserContext = {
+      ...freshCtx(),
+      emitSessionStartedFromInit: false,
+      onCatalog: () => captured.push(1),
+    };
+    const parse = createRealCliParser(ctx);
+    const events = parse({
+      type: 'system',
+      subtype: 'init',
+      skills: ['x'],
+      slash_commands: [],
+      agents: [],
+      plugins: [],
+    });
+    expect(captured).toHaveLength(1);
+    expect(events).toEqual([]); // no session.started Event since suppressed
+  });
+
+  it('handles missing/empty payload by still invoking onCatalog with the raw line', () => {
+    const captured: Record<string, unknown>[] = [];
+    const ctx: ParserContext = {
+      ...freshCtx(),
+      onCatalog: (raw: Record<string, unknown>) => captured.push(raw),
+    };
+    const parse = createRealCliParser(ctx);
+    parse({ type: 'system', subtype: 'init' }); // no array fields at all
+    expect(captured).toHaveLength(1);
+    // Whether absent fields surface as undefined or [] is parser's choice;
+    // SessionManager defends against both shapes via Array.isArray checks.
+  });
+
+  it('does NOT crash when onCatalog is undefined and a system/init line arrives', () => {
+    const ctx: ParserContext = {
+      ...freshCtx(),
+      // onCatalog intentionally omitted
+    };
+    const parse = createRealCliParser(ctx);
+    expect(() =>
+      parse({
+        type: 'system',
+        subtype: 'init',
+        skills: ['x'],
+        slash_commands: [],
+        agents: [],
+        plugins: [],
+      }),
+    ).not.toThrow();
+  });
+});

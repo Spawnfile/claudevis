@@ -1,3 +1,4 @@
+import type { SkillEntry } from '@claudevis/shared';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { useConnection } from '../src/store/connection.js';
 
@@ -90,5 +91,40 @@ describe('useConnection', () => {
     expect(useConnection.getState().replayDone).toBe(false);
     fake.recv(JSON.stringify({ type: 'replay.done' }));
     expect(useConnection.getState().replayDone).toBe(true);
+  });
+});
+
+describe('connection store — M3b.2 catalog and pendingPromptPrefix', () => {
+  beforeEach(() => {
+    useConnection.getState().reset();
+  });
+
+  it('catalog defaults to null on fresh state', () => {
+    expect(useConnection.getState().catalog).toBeNull();
+  });
+
+  it('pendingPromptPrefix defaults to empty string on fresh state', () => {
+    expect(useConnection.getState().pendingPromptPrefix).toBe('');
+  });
+
+  it('setPendingPromptPrefix sets the slice', () => {
+    useConnection.getState().setPendingPromptPrefix('/test-skill ');
+    expect(useConnection.getState().pendingPromptPrefix).toBe('/test-skill ');
+  });
+
+  it('setPendingPromptPrefix can be cleared with empty string', () => {
+    useConnection.getState().setPendingPromptPrefix('/foo ');
+    useConnection.getState().setPendingPromptPrefix('');
+    expect(useConnection.getState().pendingPromptPrefix).toBe('');
+  });
+
+  it('reset clears catalog and pendingPromptPrefix', () => {
+    const skills: SkillEntry[] = [
+      { name: 's1', description: '', source: 'user', path: '', kind: 'skill' },
+    ];
+    useConnection.setState({ catalog: skills, pendingPromptPrefix: '/x ' });
+    useConnection.getState().reset();
+    expect(useConnection.getState().catalog).toBeNull();
+    expect(useConnection.getState().pendingPromptPrefix).toBe('');
   });
 });

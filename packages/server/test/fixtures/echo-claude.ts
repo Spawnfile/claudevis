@@ -20,6 +20,17 @@ const emit = (obj: unknown) => {
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 emit({ type: 'session.started', name: 'fake', cwd: process.cwd(), model: 'fake-model' });
+// M3b.2: emit a system/init-shaped catalog so SessionManager's fake-mode
+// handler populates the drawer. Mirrors the real CLI's wire shape so the
+// end-to-end skill.invoked + catalog flow works without API spend.
+emit({
+  type: 'system',
+  subtype: 'init',
+  skills: ['plugin-a:test-skill'],
+  slash_commands: ['plugin-a:test-cmd'],
+  agents: ['test-agent'],
+  plugins: [{ name: 'plugin-a', path: '/fake/plugin-a', source: 'fake' }],
+});
 
 let counter = 0;
 const next = () => `c-${++counter}`;

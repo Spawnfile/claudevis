@@ -1,4 +1,4 @@
-import type { Command, Event, ServerFrame } from '@claudevis/shared';
+import type { Command, Event, ServerFrame, SkillEntry } from '@claudevis/shared';
 import { create } from 'zustand';
 
 interface ConnectionState {
@@ -6,16 +6,25 @@ interface ConnectionState {
   connected: boolean;
   replayDone: boolean;
   events: Event[];
+  catalog: SkillEntry[] | null;
+  pendingPromptPrefix: string;
   connect: (url: string) => void;
   send: (cmd: Command) => void;
+  setPendingPromptPrefix: (s: string) => void;
   reset: () => void;
 }
+
+const assertNever = (x: never): never => {
+  throw new Error(`unhandled ServerFrame variant: ${JSON.stringify(x)}`);
+};
 
 export const useConnection = create<ConnectionState>((set, get) => ({
   socket: null,
   connected: false,
   replayDone: false,
   events: [],
+  catalog: null,
+  pendingPromptPrefix: '',
   connect: (url) => {
     // React 19 strict-mode mounts effects twice in development. Skip a second
     // connect to the same URL so we don't open two sockets and end up with
@@ -31,17 +40,43 @@ export const useConnection = create<ConnectionState>((set, get) => ({
       } catch {
         return;
       }
-      if (frame.type === 'hello') {
-        set({ connected: true });
-        // Auto-subscribe so a fresh page load receives the full history
-        // from the server's event store before live events resume.
-        ws.send(
-          JSON.stringify({ type: 'subscribe', sessionIds: '*', replay: true } satisfies Command),
-        );
-      } else if (frame.type === 'event') {
-        set((s) => ({ events: [...s.events, frame.event] }));
-      } else if (frame.type === 'replay.done') {
-        set({ replayDone: true });
+      // M3b.2: exhaustive switch + assertNever default. Future ServerFrame
+      // additions must be handled here or TypeScript fails the build (closes
+      // the silent-drop gap that previously let settings.status and
+      // skill.catalog flow into the void).
+      switch (frame.type) {
+        case 'hello': {
+          set({ connected: true });
+          // Auto-subscribe so a fresh page load receives the full history
+          // from the server's event store before live events resume.
+          ws.send(
+            JSON.stringify({
+              type: 'subscribe',
+              sessionIds: '*',
+              replay: true,
+            } satisfies Command),
+          );
+          return;
+        }
+        case 'event': {
+          set((s) => ({ events: [...s.events, frame.event] }));
+          return;
+        }
+        case 'replay.done': {
+          set({ replayDone: true });
+          return;
+        }
+        case 'settings.status': {
+          // M1 stub — no UI yet. Silently accepted so the exhaustive switch
+          // typechecks; a future settings overlay (M4) will surface this.
+          return;
+        }
+        case 'skill.catalog': {
+          set({ catalog: frame.skills });
+          return;
+        }
+        default:
+          return assertNever(frame);
       }
     };
     ws.onclose = () => {
@@ -59,5 +94,14 @@ export const useConnection = create<ConnectionState>((set, get) => ({
     if (!ws || ws.readyState !== OPEN) return;
     ws.send(JSON.stringify(cmd));
   },
-  reset: () => set({ socket: null, connected: false, replayDone: false, events: [] }),
+  setPendingPromptPrefix: (s) => set({ pendingPromptPrefix: s }),
+  reset: () =>
+    set({
+      socket: null,
+      connected: false,
+      replayDone: false,
+      events: [],
+      catalog: null,
+      pendingPromptPrefix: '',
+    }),
 }));

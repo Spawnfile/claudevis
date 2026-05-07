@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { resolve } from 'node:path';
-import type { Event } from '@claudevis/shared';
+import type { Event, SkillEntry } from '@claudevis/shared';
 import { createEventStore } from '../src/event-store.js';
 import { createRealCliParser } from '../src/real-claude-parser.js';
 import { serializeUserPromptForRealCli } from '../src/real-claude-serializer.js';
@@ -115,6 +115,94 @@ describe('SessionManager.respondToPermission', () => {
     await expect(
       mgr.respondToPermission({ requestId: 'auto-deny-toolu_xyz', decision: 'allow' }),
     ).rejects.toThrow(/no pending permission/);
+    await mgr.shutdown();
+  });
+});
+
+describe('SessionManager — skill.invoked synthesis', () => {
+  // T7 landed; tests now exercise the full catalog → /-prefix → skill.invoked flow.
+
+  it('emits skill.invoked BEFORE user.prompt when prompt starts with /<known-name>', async () => {
+    const events: Event[] = [];
+    const store = createEventStore({ kind: 'memory' });
+    const mgr = createSessionManager({
+      store,
+      onEvent: (e) => events.push(e),
+      claudeCommand: { command: 'bun', baseArgs: [FAKE] },
+      mode: 'fake',
+    });
+    const sessionId = await mgr.create({ cwd: process.cwd(), name: 'test', model: 'sonnet' });
+    // Wait for fake fixture's startup system/init line to populate catalog.
+    await new Promise((r) => setTimeout(r, 80));
+    await mgr.send({ sessionId, content: '/plugin-a:test-skill some args' });
+    await new Promise((r) => setTimeout(r, 50));
+
+    const userPromptIdx = events.findIndex((e) => e.type === 'user.prompt');
+    const skillInvokedIdx = events.findIndex((e) => e.type === 'skill.invoked');
+    expect(skillInvokedIdx).toBeGreaterThanOrEqual(0);
+    expect(userPromptIdx).toBeGreaterThanOrEqual(0);
+    expect(skillInvokedIdx).toBeLessThan(userPromptIdx);
+
+    const skillEvent = events[skillInvokedIdx];
+    if (skillEvent && skillEvent.type === 'skill.invoked') {
+      expect(skillEvent.skillName).toBe('plugin-a:test-skill');
+      expect(skillEvent.args).toBe('some args');
+    }
+    await mgr.shutdown();
+  });
+
+  it('does NOT emit skill.invoked when prompt /<name> is unknown', async () => {
+    const events: Event[] = [];
+    const store = createEventStore({ kind: 'memory' });
+    const mgr = createSessionManager({
+      store,
+      onEvent: (e) => events.push(e),
+      claudeCommand: { command: 'bun', baseArgs: [FAKE] },
+      mode: 'fake',
+    });
+    const sessionId = await mgr.create({ cwd: process.cwd(), name: 'test', model: 'sonnet' });
+    await new Promise((r) => setTimeout(r, 80));
+    await mgr.send({ sessionId, content: '/unknown-skill foo' });
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(events.find((e) => e.type === 'skill.invoked')).toBeUndefined();
+    expect(events.find((e) => e.type === 'user.prompt')).toBeDefined();
+    await mgr.shutdown();
+  });
+
+  it('does NOT emit skill.invoked when prompt has no /-prefix at all', async () => {
+    const events: Event[] = [];
+    const store = createEventStore({ kind: 'memory' });
+    const mgr = createSessionManager({
+      store,
+      onEvent: (e) => events.push(e),
+      claudeCommand: { command: 'bun', baseArgs: [FAKE] },
+      mode: 'fake',
+    });
+    const sessionId = await mgr.create({ cwd: process.cwd(), name: 'test', model: 'sonnet' });
+    await new Promise((r) => setTimeout(r, 80));
+    await mgr.send({ sessionId, content: 'plain text prompt' });
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(events.find((e) => e.type === 'skill.invoked')).toBeUndefined();
+    expect(events.find((e) => e.type === 'user.prompt')).toBeDefined();
+    await mgr.shutdown();
+  });
+
+  it('forwards onCatalog SkillEntry[] to the option callback', async () => {
+    const captured: SkillEntry[][] = [];
+    const store = createEventStore({ kind: 'memory' });
+    const mgr = createSessionManager({
+      store,
+      onEvent: () => {},
+      claudeCommand: { command: 'bun', baseArgs: [FAKE] },
+      mode: 'fake',
+      onCatalog: (entries) => captured.push(entries),
+    });
+    await mgr.create({ cwd: process.cwd(), name: 'test', model: 'sonnet' });
+    await new Promise((r) => setTimeout(r, 100));
+    expect(captured.length).toBeGreaterThanOrEqual(1);
+    expect(captured[0]?.length).toBeGreaterThanOrEqual(1);
     await mgr.shutdown();
   });
 });

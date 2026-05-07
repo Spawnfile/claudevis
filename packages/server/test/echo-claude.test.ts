@@ -51,10 +51,11 @@ async function runFixture(opts: FixtureOptions): Promise<unknown[]> {
 }
 
 describe('echo-claude.ts fixture', () => {
-  test('default prompt emits the M3a-era scripted scene', async () => {
+  test('default prompt emits the M3a-era scripted scene plus a system/init catalog at startup', async () => {
     const events = await runFixture({ prompt: 'hello' });
     const types = events.map((e) => (e as { type: string }).type);
     expect(types).toContain('session.started');
+    expect(types).toContain('system'); // M3b.2 catalog at startup
     expect(types).toContain('agent.thinking');
     expect(types).toContain('tool.started');
     expect(types).toContain('tool.completed');
@@ -68,10 +69,35 @@ describe('echo-claude.ts fixture', () => {
     expect(types).not.toContain('permission.resolved');
   });
 
+  test('startup system/init line carries the hardcoded test catalog', async () => {
+    // Send no prompt — the runFixture timeout fires after the startup
+    // emissions land. The assertion targets the startup system/init line by
+    // subtype filter so trailing default-scene events would not interfere
+    // anyway.
+    const events = await runFixture({ timeoutMs: 500 });
+    const initLine = events.find(
+      (e) =>
+        (e as { type: string }).type === 'system' && (e as { subtype?: string }).subtype === 'init',
+    ) as
+      | {
+          skills: string[];
+          slash_commands: string[];
+          agents: string[];
+          plugins: unknown[];
+        }
+      | undefined;
+    expect(initLine).toBeDefined();
+    expect(initLine?.skills).toContain('plugin-a:test-skill');
+    expect(initLine?.slash_commands).toContain('plugin-a:test-cmd');
+    expect(initLine?.agents).toContain('test-agent');
+    expect(Array.isArray(initLine?.plugins)).toBe(true);
+  });
+
   test('/permission-test sentinel emits permission.requested only (no default scene)', async () => {
     const events = await runFixture({ prompt: '/permission-test' });
     const types = events.map((e) => (e as { type: string }).type);
     expect(types).toContain('permission.requested');
+    expect(types).toContain('system'); // startup init line is always present
     // Sentinel should NOT trigger the default scene
     expect(types).not.toContain('agent.thinking');
     expect(types).not.toContain('subagent.dispatched');

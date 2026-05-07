@@ -100,4 +100,10 @@ export interface SkillEntry {
   description: string;
   source: 'user' | 'project' | 'plugin';
   path: string;
+  // M3b.2: distinguishes invokable kinds for in-drawer category grouping.
+  // Real CLI's system/init payload exposes skills, slash_commands, and agents
+  // as three separate arrays of names; this field carries that distinction
+  // through to the frontend. Optional to keep the change additive — clients
+  // that don't set or read it see today's behavior.
+  kind?: 'skill' | 'slash_command' | 'agent';
 }
