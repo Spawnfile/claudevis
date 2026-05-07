@@ -1,16 +1,20 @@
 import { expect, test } from '@playwright/test';
 
-// Auto-accept the cwd prompt that the New Session button raises.
-test.beforeEach(async ({ page }) => {
-  page.on('dialog', (d) => d.accept('.'));
-});
+// Helper: open the new-session form, accept defaults, click Create.
+// Returns once a session card with the model badge has appeared.
+async function createSession(page: import('@playwright/test').Page) {
+  await page.getByRole('button', { name: /New Session/ }).click();
+  await page.getByRole('button', { name: /Create/ }).click();
+  await expect(page.locator('.session').first()).toBeVisible();
+  await expect(page.locator('.model-badge').first()).toBeVisible();
+  await page.locator('.session').first().click();
+}
 
 test('walking skeleton: create session, send prompt, receive echo', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByText('● connected')).toBeVisible({ timeout: 10_000 });
 
-  await page.getByRole('button', { name: /New Session/ }).click();
-  await page.locator('.session').first().click();
+  await createSession(page);
 
   await page.getByPlaceholder('Type a prompt...').fill('hello');
   await page.getByPlaceholder('Type a prompt...').press('Enter');
@@ -23,8 +27,7 @@ test('full event vocabulary reaches the UI', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByText('● connected')).toBeVisible({ timeout: 10_000 });
 
-  await page.getByRole('button', { name: /New Session/ }).click();
-  await page.locator('.session').first().click();
+  await createSession(page);
   await page.getByPlaceholder('Type a prompt...').fill('coverage');
   await page.getByPlaceholder('Type a prompt...').press('Enter');
 

@@ -2,19 +2,23 @@ import { expect, test } from '@playwright/test';
 
 const RUN = process.env.CLAUDEVIS_RUN_REAL === '1';
 
-test.describe('real claude (CLAUDEVIS_RUN_REAL=1)', () => {
-  test.beforeEach(async ({ page }) => {
-    page.on('dialog', (d) => d.accept('.'));
-  });
+async function createSession(page: import('@playwright/test').Page) {
+  await page.getByRole('button', { name: /New Session/ }).click();
+  await page.getByRole('button', { name: /Create/ }).click();
+  await expect(page.locator('.session').first()).toBeVisible();
+  await expect(page.locator('.model-badge').first()).toBeVisible();
+  await page.locator('.session').first().click();
+}
 
+test.describe('real claude (CLAUDEVIS_RUN_REAL=1)', () => {
   test('real claude responds to a basic prompt', async ({ page }) => {
     test.skip(!RUN, 'requires CLAUDEVIS_RUN_REAL=1');
 
     await page.goto('/');
     await expect(page.getByText('● connected')).toBeVisible({ timeout: 10_000 });
 
-    await page.getByRole('button', { name: /New Session/ }).click();
-    await page.locator('.session').first().click();
+    await createSession(page);
+
     await page.getByPlaceholder('Type a prompt...').fill('Reply with exactly: ok');
     await page.getByPlaceholder('Type a prompt...').press('Enter');
 

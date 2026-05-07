@@ -184,3 +184,60 @@ button.primary {
   color: #d8e2f0;
   border-color: #ffb84d;
 }
+
+.model-badge {
+  font-size: 9px;
+  padding: 1px 4px;
+  border-radius: 2px;
+  margin-left: 4px;
+  vertical-align: middle;
+  text-transform: lowercase;
+  font-family: inherit;
+}
+
+.model-sonnet {
+  background: linear-gradient(180deg, #c0c0c0, #888);
+  color: #000;
+}
+.model-opus {
+  background: linear-gradient(180deg, #ffd24a, #c89a16);
+  color: #000;
+}
+.model-haiku {
+  background: linear-gradient(180deg, #cd7f32, #8b4513);
+  color: #fff;
+}
+
+.new-session-form {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  margin-bottom: 8px;
+  background: #1f2632;
+  border: 1px solid #2a3340;
+  border-radius: 4px;
+}
+
+.new-session-form input,
+.new-session-form select {
+  background: #0e1218;
+  border: 1px solid #2a3340;
+  color: #d8e2f0;
+  padding: 4px 6px;
+  font-size: 11px;
+  font-family: ui-monospace, monospace;
+  border-radius: 3px;
+}
+
+.new-session-form-actions {
+  display: flex;
+  gap: 4px;
+  justify-content: flex-end;
+  margin-top: 2px;
+}
+
+.new-session-form-actions button {
+  font-size: 11px;
+  padding: 3px 10px;
+}

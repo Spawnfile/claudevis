@@ -29,6 +29,20 @@ const scenarios: ProbeScenario[] = [
     prompts: ['{not valid JSON for forcing a parse error path}'],
     settleMs: 5_000,
   },
+  {
+    name: 'edit-file',
+    prompts: [
+      'Use the Write tool to create the file /tmp/claudevis-m3a-probe.txt with the contents "hello m3a". Do not read it first.',
+    ],
+    settleMs: 30_000,
+  },
+  {
+    name: 'subagent-task',
+    prompts: [
+      'Use the Task tool to dispatch the planner subagent with the prompt "outline a hello-world feature in two short bullet points". Wait for the subagent to return before doing anything else.',
+    ],
+    settleMs: 90_000,
+  },
 ];
 
 async function runScenario(s: ProbeScenario): Promise<Array<Record<string, unknown>>> {

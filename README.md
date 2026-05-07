@@ -69,6 +69,12 @@ pnpm --filter @claudevis/web dev
 Open `http://localhost:5173/` in your browser. Requires `claude` on
 PATH and `claude login` already run.
 
+The first time you click "+ New Session" the sidebar opens a small form
+asking for cwd, session name, and model (sonnet / opus / haiku, default
+sonnet). Tilde paths like `~/projects/my-repo` are expanded server-side.
+Agent messages and thinking blocks render as GitHub-flavored markdown
+(bold, italics, lists, code fences, tables, autolinks).
+
 ### Fake mode (no token cost)
 
 ```bash
@@ -86,12 +92,13 @@ and screenshot work without consuming API tokens.
 The real `claude` CLI does not surface every event type the protocol
 supports. In real mode you will see: `session.started`,
 `agent.message`, `agent.thinking`, `tool.started`, `tool.completed`,
+`subagent.dispatched`, `subagent.completed`, `file.changed`,
 `tokens.updated`, `error`, plus the locally-emitted `user.prompt`,
 `interrupt.signaled`, `session.ended`. In fake mode you additionally
-see: `subagent.dispatched`, `subagent.completed`, `file.changed`,
-`skill.invoked`, `permission.requested`, `permission.resolved`,
+see: `skill.invoked`, `permission.requested`, `permission.resolved`,
 `session.idle`, `session.mode.changed` &mdash; the fake fixture emits
 these so the frontend's exhaustive event renderer stays exercised.
+M3b will move the first three (permissions + skill) into real mode too.
 
 ## Tests
 
@@ -145,11 +152,10 @@ claudevis/
 
 - [x] M1 &mdash; Walking skeleton
 - [x] M2 &mdash; Real-CLI integration with stream-json line parser
-- [ ] M3 &mdash; Isometric pixel-art rendering with PixiJS; permission
-      round-trip; skill drawer; subagent + file-change synthesis from
-      tool calls
-- [ ] M4 &mdash; OBS broadcast mode, session persistence + `--resume`
-      discovery
+- [x] M3a &mdash; Subagent + file.changed synthesis, model dropdown, markdown rendering
+- [ ] M3b &mdash; Permission round-trip, skill drawer, `--resume` discovery
+- [ ] M3c &mdash; Isometric pixel-art rendering (PixiJS or alternative)
+- [ ] M4 &mdash; `claude login` OAuth, OBS broadcast mode, session persistence
 
 ## Disclaimer
 

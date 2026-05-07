@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'bun:test';
-import { type ParserContext, createRealCliParser } from '../src/real-claude-parser.js';
+import {
+  type ParserContext,
+  type RealCliLineParser,
+  createRealCliParser,
+} from '../src/real-claude-parser.js';
 
 function freshCtx(): ParserContext {
   let n = 0;
@@ -296,6 +300,349 @@ describe('createRealCliParser — error', () => {
   });
 });
 
+describe('createRealCliParser — file.changed synthesis', () => {
+  function emitWriteCall(p: RealCliLineParser, callId: string, filePath: string) {
+    return p({
+      type: 'assistant',
+      message: {
+        content: [
+          {
+            type: 'tool_use',
+            id: callId,
+            name: 'Write',
+            input: { file_path: filePath, content: 'body' },
+          },
+        ],
+      },
+    });
+  }
+
+  function emitToolResult(p: RealCliLineParser, callId: string, content: unknown, isError = false) {
+    return p({
+      type: 'user',
+      message: {
+        role: 'user',
+        content: [{ type: 'tool_result', tool_use_id: callId, content, is_error: isError }],
+      },
+    });
+  }
+
+  it('emits tool.started AND tool.completed AND file.changed for a Write call', () => {
+    const p = createRealCliParser(freshCtx());
+    p({ type: 'system', subtype: 'init' });
+
+    const startEvents = emitWriteCall(p, 'toolu_w1', '/tmp/x.txt');
+    expect(startEvents.map((e) => e.type)).toEqual(['tool.started']);
+
+    const finishEvents = emitToolResult(p, 'toolu_w1', 'wrote 1 file');
+    expect(finishEvents.map((e) => e.type)).toEqual(['tool.completed', 'file.changed']);
+
+    const changed = finishEvents.find((e) => e.type === 'file.changed');
+    expect(changed).toMatchObject({
+      type: 'file.changed',
+      path: '/tmp/x.txt',
+      plus: 0,
+      minus: 0,
+      preview: 'wrote 1 file',
+    });
+  });
+
+  it('emits file.changed for Edit calls using file_path', () => {
+    const p = createRealCliParser(freshCtx());
+    p({ type: 'system', subtype: 'init' });
+    p({
+      type: 'assistant',
+      message: {
+        content: [
+          {
+            type: 'tool_use',
+            id: 'toolu_e1',
+            name: 'Edit',
+            input: { file_path: '/tmp/y.txt', old_string: 'a', new_string: 'b' },
+          },
+        ],
+      },
+    });
+    const out = emitToolResult(p, 'toolu_e1', 'edited');
+    expect(out.find((e) => e.type === 'file.changed')).toMatchObject({
+      type: 'file.changed',
+      path: '/tmp/y.txt',
+    });
+  });
+
+  it('emits file.changed for MultiEdit calls', () => {
+    const p = createRealCliParser(freshCtx());
+    p({ type: 'system', subtype: 'init' });
+    p({
+      type: 'assistant',
+      message: {
+        content: [
+          {
+            type: 'tool_use',
+            id: 'toolu_m1',
+            name: 'MultiEdit',
+            input: { file_path: '/tmp/z.txt', edits: [] },
+          },
+        ],
+      },
+    });
+    const out = emitToolResult(p, 'toolu_m1', 'edited');
+    expect(out.find((e) => e.type === 'file.changed')).toMatchObject({ path: '/tmp/z.txt' });
+  });
+
+  it('emits file.changed for NotebookEdit using notebook_path', () => {
+    const p = createRealCliParser(freshCtx());
+    p({ type: 'system', subtype: 'init' });
+    p({
+      type: 'assistant',
+      message: {
+        content: [
+          {
+            type: 'tool_use',
+            id: 'toolu_n1',
+            name: 'NotebookEdit',
+            input: { notebook_path: '/tmp/n.ipynb', cell_id: 'c1', new_source: '' },
+          },
+        ],
+      },
+    });
+    const out = emitToolResult(p, 'toolu_n1', 'notebook edited');
+    expect(out.find((e) => e.type === 'file.changed')).toMatchObject({ path: '/tmp/n.ipynb' });
+  });
+
+  it('does NOT emit file.changed when tool_result is_error is true', () => {
+    const p = createRealCliParser(freshCtx());
+    p({ type: 'system', subtype: 'init' });
+    emitWriteCall(p, 'toolu_err', '/tmp/x.txt');
+    const out = emitToolResult(p, 'toolu_err', 'permission denied', true);
+    expect(out.map((e) => e.type)).toEqual(['tool.completed']);
+    expect(out.find((e) => e.type === 'file.changed')).toBeUndefined();
+  });
+
+  it('does NOT emit file.changed when input has no file_path or notebook_path', () => {
+    const p = createRealCliParser(freshCtx());
+    p({ type: 'system', subtype: 'init' });
+    p({
+      type: 'assistant',
+      message: {
+        content: [
+          { type: 'tool_use', id: 'toolu_bad', name: 'Write', input: { content: 'no path' } },
+        ],
+      },
+    });
+    const out = emitToolResult(p, 'toolu_bad', 'ok');
+    expect(out.map((e) => e.type)).toEqual(['tool.completed']);
+  });
+
+  it('does NOT emit file.changed for non-mutating tools (Read)', () => {
+    const p = createRealCliParser(freshCtx());
+    p({ type: 'system', subtype: 'init' });
+    p({
+      type: 'assistant',
+      message: {
+        content: [
+          {
+            type: 'tool_use',
+            id: 'toolu_r1',
+            name: 'Read',
+            input: { file_path: '/tmp/r.txt' },
+          },
+        ],
+      },
+    });
+    const out = emitToolResult(p, 'toolu_r1', 'file body');
+    expect(out.map((e) => e.type)).toEqual(['tool.completed']);
+  });
+
+  it('truncates preview to first 200 characters', () => {
+    const p = createRealCliParser(freshCtx());
+    p({ type: 'system', subtype: 'init' });
+    emitWriteCall(p, 'toolu_long', '/tmp/long.txt');
+    const huge = 'x'.repeat(500);
+    const out = emitToolResult(p, 'toolu_long', huge);
+    const changed = out.find((e) => e.type === 'file.changed') as { preview?: string } | undefined;
+    expect(changed?.preview?.length).toBe(200);
+  });
+
+  it('coerces non-string tool_result content to JSON for preview', () => {
+    const p = createRealCliParser(freshCtx());
+    p({ type: 'system', subtype: 'init' });
+    emitWriteCall(p, 'toolu_obj', '/tmp/obj.txt');
+    const out = emitToolResult(p, 'toolu_obj', [{ type: 'text', text: 'wrote' }]);
+    const changed = out.find((e) => e.type === 'file.changed') as { preview?: string } | undefined;
+    expect(typeof changed?.preview).toBe('string');
+    expect(changed?.preview).toContain('wrote');
+  });
+});
+
+describe('createRealCliParser — subagent.* synthesis (REPLACE policy)', () => {
+  function emitTaskCall(
+    p: RealCliLineParser,
+    callId: string,
+    subagentType: string,
+    prompt: string,
+  ) {
+    return p({
+      type: 'assistant',
+      message: {
+        content: [
+          {
+            type: 'tool_use',
+            id: callId,
+            name: 'Agent',
+            input: { subagent_type: subagentType, prompt, description: 'task description' },
+          },
+        ],
+      },
+    });
+  }
+
+  function emitTaskResult(p: RealCliLineParser, callId: string, content: unknown, isError = false) {
+    return p({
+      type: 'user',
+      message: {
+        role: 'user',
+        content: [{ type: 'tool_result', tool_use_id: callId, content, is_error: isError }],
+      },
+    });
+  }
+
+  it('emits subagent.dispatched (NOT tool.started) for an Agent tool_use', () => {
+    const p = createRealCliParser(freshCtx());
+    p({ type: 'system', subtype: 'init' });
+    const out = emitTaskCall(p, 'toolu_t1', 'planner', 'plan it');
+    expect(out.map((e) => e.type)).toEqual(['subagent.dispatched']);
+    expect(out[0]).toMatchObject({
+      type: 'subagent.dispatched',
+      parentCallId: 'toolu_t1',
+      agentType: 'planner',
+      prompt: 'plan it',
+      childSessionId: 'toolu_t1',
+    });
+  });
+
+  it('emits subagent.completed (NOT tool.completed) for the matching tool_result', () => {
+    const p = createRealCliParser(freshCtx());
+    p({ type: 'system', subtype: 'init' });
+    emitTaskCall(p, 'toolu_t2', 'researcher', 'research it');
+    const out = emitTaskResult(p, 'toolu_t2', 'final result string');
+    expect(out.map((e) => e.type)).toEqual(['subagent.completed']);
+    expect(out[0]).toMatchObject({
+      type: 'subagent.completed',
+      parentCallId: 'toolu_t2',
+      childSessionId: 'toolu_t2',
+      result: 'final result string',
+      status: 'ok',
+    });
+  });
+
+  it('marks subagent.completed as error when is_error is true', () => {
+    const p = createRealCliParser(freshCtx());
+    p({ type: 'system', subtype: 'init' });
+    emitTaskCall(p, 'toolu_t3', 'planner', 'plan it');
+    const out = emitTaskResult(p, 'toolu_t3', 'failed', true);
+    expect(out[0]).toMatchObject({ type: 'subagent.completed', status: 'error' });
+  });
+
+  it('extracts the first text block when result content is a structured array', () => {
+    // The real CLI's Agent tool_result wraps content in an array of two
+    // text blocks: [0] is the subagent's text output, [1] is agent
+    // metadata (agentId, usage). The parser should surface item 0.
+    const p = createRealCliParser(freshCtx());
+    p({ type: 'system', subtype: 'init' });
+    emitTaskCall(p, 'toolu_t4', 'planner', 'plan it');
+    const out = emitTaskResult(p, 'toolu_t4', [
+      { type: 'text', text: 'subagent answer' },
+      { type: 'text', text: 'agentId: ax (use SendMessage...)' },
+    ]);
+    expect(out[0]).toMatchObject({
+      type: 'subagent.completed',
+      result: 'subagent answer',
+      status: 'ok',
+    });
+  });
+
+  it('falls back to "unknown" agentType when subagent_type is missing', () => {
+    const p = createRealCliParser(freshCtx());
+    p({ type: 'system', subtype: 'init' });
+    const out = p({
+      type: 'assistant',
+      message: {
+        content: [
+          { type: 'tool_use', id: 'toolu_no_type', name: 'Agent', input: { prompt: 'hi' } },
+        ],
+      },
+    });
+    expect((out[0] as { agentType: string }).agentType).toBe('unknown');
+  });
+
+  it('falls back to empty string when prompt is missing', () => {
+    const p = createRealCliParser(freshCtx());
+    p({ type: 'system', subtype: 'init' });
+    const out = p({
+      type: 'assistant',
+      message: {
+        content: [
+          {
+            type: 'tool_use',
+            id: 'toolu_no_prompt',
+            name: 'Agent',
+            input: { subagent_type: 'researcher' },
+          },
+        ],
+      },
+    });
+    expect((out[0] as { prompt: string }).prompt).toBe('');
+  });
+
+  it('keeps Agent and Edit calls independent (parallel mix)', () => {
+    const p = createRealCliParser(freshCtx());
+    p({ type: 'system', subtype: 'init' });
+
+    // Both calls launched in the same assistant message.
+    const startBoth = p({
+      type: 'assistant',
+      message: {
+        content: [
+          {
+            type: 'tool_use',
+            id: 'toolu_task',
+            name: 'Agent',
+            input: { subagent_type: 'planner', prompt: 'p' },
+          },
+          {
+            type: 'tool_use',
+            id: 'toolu_write',
+            name: 'Write',
+            input: { file_path: '/tmp/p.txt', content: 'hi' },
+          },
+        ],
+      },
+    });
+    expect(startBoth.map((e) => e.type)).toEqual(['subagent.dispatched', 'tool.started']);
+
+    // Agent result first.
+    const taskOut = p({
+      type: 'user',
+      message: {
+        role: 'user',
+        content: [{ type: 'tool_result', tool_use_id: 'toolu_task', content: 'done' }],
+      },
+    });
+    expect(taskOut.map((e) => e.type)).toEqual(['subagent.completed']);
+
+    // Write result second.
+    const writeOut = p({
+      type: 'user',
+      message: {
+        role: 'user',
+        content: [{ type: 'tool_result', tool_use_id: 'toolu_write', content: 'wrote' }],
+      },
+    });
+    expect(writeOut.map((e) => e.type)).toEqual(['tool.completed', 'file.changed']);
+  });
+});
+
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -314,6 +661,25 @@ describe('createRealCliParser — fixture replay', () => {
         'tool.started',
         'tool.completed',
         'agent.message',
+        'tokens.updated',
+      ],
+    },
+    {
+      file: 'edit-file.ndjson',
+      expectTypes: [
+        'session.started',
+        'tool.started',
+        'tool.completed',
+        'file.changed',
+        'tokens.updated',
+      ],
+    },
+    {
+      file: 'subagent-task.ndjson',
+      expectTypes: [
+        'session.started',
+        'subagent.dispatched',
+        'subagent.completed',
         'tokens.updated',
       ],
     },

@@ -1,5 +1,23 @@
 import type { Event } from '@claudevis/shared';
 
+function extractSubagentResult(content: unknown): unknown {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content) && content.length > 0) {
+    const first = content[0];
+    if (
+      first !== null &&
+      typeof first === 'object' &&
+      'type' in first &&
+      (first as { type: unknown }).type === 'text' &&
+      'text' in first &&
+      typeof (first as { text: unknown }).text === 'string'
+    ) {
+      return (first as { text: string }).text;
+    }
+  }
+  return content ?? null;
+}
+
 export interface ParserContext {
   sessionId: string;
   name: string;
@@ -24,6 +42,10 @@ export type RealCliLineParser = (raw: unknown) => Event[];
 export function createRealCliParser(ctx: ParserContext): RealCliLineParser {
   let sessionStartedEmitted = false;
   const toolStartTs = new Map<string, number>();
+  const pendingFileEditCalls = new Map<string, { path: string }>();
+  const taskCallIds = new Set<string>();
+
+  const FILE_MUTATING_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
 
   return (raw: unknown): Event[] => {
     if (raw === null || typeof raw !== 'object') return [];
@@ -80,6 +102,45 @@ export function createRealCliParser(ctx: ParserContext): RealCliLineParser {
           });
         }
         if (block.type === 'tool_use' && typeof block.id === 'string') {
+          const toolName = typeof block.name === 'string' ? block.name : 'unknown';
+          // REPLACE policy — Agent tool calls become subagent.* events. Plain
+          // tool.started is suppressed to avoid double-emitting and to give
+          // the future isometric scene grammar a clean signal. Note: the wire
+          // format names this tool "Agent" — confirmed by M3a probe captures
+          // (subagent-task.ndjson). Internally we still call the bookkeeping
+          // set taskCallIds because the design doc and protocol union speak
+          // of "Task tool" / "subagent dispatch" interchangeably.
+          if (toolName === 'Agent') {
+            const input = (block.input ?? {}) as Record<string, unknown>;
+            taskCallIds.add(block.id);
+            toolStartTs.set(block.id, ctx.now());
+            events.push({
+              id: ctx.newEventId(),
+              ts: ctx.now(),
+              sessionId: ctx.sessionId,
+              type: 'subagent.dispatched',
+              parentCallId: block.id,
+              agentType: typeof input.subagent_type === 'string' ? input.subagent_type : 'unknown',
+              prompt: typeof input.prompt === 'string' ? input.prompt : '',
+              childSessionId: block.id,
+            });
+            continue;
+          }
+          // Track Edit-family calls so the matching tool_result can additionally
+          // emit file.changed. Read the path from file_path or notebook_path;
+          // if neither is present, skip tracking (file.changed won't fire).
+          if (FILE_MUTATING_TOOLS.has(toolName)) {
+            const input = (block.input ?? {}) as Record<string, unknown>;
+            const path =
+              typeof input.file_path === 'string'
+                ? input.file_path
+                : typeof input.notebook_path === 'string'
+                  ? input.notebook_path
+                  : null;
+            if (path !== null) {
+              pendingFileEditCalls.set(block.id, { path });
+            }
+          }
           toolStartTs.set(block.id, ctx.now());
           events.push({
             id: ctx.newEventId(),
@@ -87,7 +148,7 @@ export function createRealCliParser(ctx: ParserContext): RealCliLineParser {
             sessionId: ctx.sessionId,
             type: 'tool.started',
             callId: block.id,
-            name: typeof block.name === 'string' ? block.name : 'unknown',
+            name: toolName,
             input: block.input ?? null,
           });
         }
@@ -101,18 +162,61 @@ export function createRealCliParser(ctx: ParserContext): RealCliLineParser {
       const events: Event[] = [];
       for (const block of content as Array<Record<string, unknown>>) {
         if (block.type === 'tool_result' && typeof block.tool_use_id === 'string') {
-          const startTs = toolStartTs.get(block.tool_use_id) ?? ctx.now();
-          toolStartTs.delete(block.tool_use_id);
+          const callId = block.tool_use_id;
+          const startTs = toolStartTs.get(callId) ?? ctx.now();
+          toolStartTs.delete(callId);
+          const isError = block.is_error === true;
+          // REPLACE policy for Agent tool — emit subagent.completed and skip
+          // the plain tool.completed. The Agent tool_result content is a
+          // structured array (item 0 = subagent text output, item 1 = agent
+          // metadata). Extract item 0's text as the meaningful result; fall
+          // back to verbatim content for unexpected shapes.
+          if (taskCallIds.has(callId)) {
+            taskCallIds.delete(callId);
+            const result = extractSubagentResult(block.content);
+            events.push({
+              id: ctx.newEventId(),
+              ts: ctx.now(),
+              sessionId: ctx.sessionId,
+              type: 'subagent.completed',
+              parentCallId: callId,
+              childSessionId: callId,
+              result,
+              status: isError ? 'error' : 'ok',
+            });
+            continue;
+          }
           events.push({
             id: ctx.newEventId(),
             ts: ctx.now(),
             sessionId: ctx.sessionId,
             type: 'tool.completed',
-            callId: block.tool_use_id,
+            callId,
             output: block.content ?? null,
-            status: block.is_error === true ? 'error' : 'ok',
+            status: isError ? 'error' : 'ok',
             durationMs: Math.max(0, ctx.now() - startTs),
           });
+          // Additive file.changed for tracked Edit-family calls (success only).
+          const tracked = pendingFileEditCalls.get(callId);
+          if (tracked) {
+            pendingFileEditCalls.delete(callId);
+            if (!isError) {
+              const previewSource =
+                typeof block.content === 'string'
+                  ? block.content
+                  : JSON.stringify(block.content ?? '');
+              events.push({
+                id: ctx.newEventId(),
+                ts: ctx.now(),
+                sessionId: ctx.sessionId,
+                type: 'file.changed',
+                path: tracked.path,
+                plus: 0,
+                minus: 0,
+                preview: previewSource.slice(0, 200),
+              });
+            }
+          }
         }
       }
       return events;

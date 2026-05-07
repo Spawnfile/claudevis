@@ -1,5 +1,7 @@
 import type { Event } from '@claudevis/shared';
 import type React from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { useConnection } from './store/connection.js';
 
 export function Chat({ sessionId }: { sessionId: string | null }) {
@@ -14,6 +16,10 @@ export function Chat({ sessionId }: { sessionId: string | null }) {
       ))}
     </div>
   );
+}
+
+function Markdown({ children }: { children: string }) {
+  return <ReactMarkdown remarkPlugins={[remarkGfm]}>{children}</ReactMarkdown>;
 }
 
 // Exhaustiveness helper — the `default` arm assigns the remaining union
@@ -37,14 +43,18 @@ function ChatRow({ event: e }: { event: Event }): React.JSX.Element | null {
       return (
         <div className="msg thinking" data-evtype="agent.thinking">
           <div className="who">💭 Thinking</div>
-          <div className="body">{e.content}</div>
+          <div className="body">
+            <Markdown>{e.content}</Markdown>
+          </div>
         </div>
       );
     case 'agent.message':
       return (
         <div className="msg agent" data-evtype="agent.message">
           <div className="who">⚒ Agent</div>
-          <div className="body">{e.content}</div>
+          <div className="body">
+            <Markdown>{e.content}</Markdown>
+          </div>
         </div>
       );
     case 'tool.started':

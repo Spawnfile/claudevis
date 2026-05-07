@@ -4,6 +4,7 @@ import type { EventStore } from './event-store.js';
 import { detectGitInfo } from './git-info.js';
 import { type ParserContext, createRealCliParser } from './real-claude-parser.js';
 import { serializeUserPromptForRealCli } from './real-claude-serializer.js';
+import { buildSpawnArgs, expandTilde } from './spawn-args.js';
 import { type SubprocessHandle, spawnSubprocess } from './subprocess.js';
 
 export interface SessionManager {
@@ -233,7 +234,8 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
   };
 
   return {
-    create: async ({ cwd, name, model, resume }) => {
+    create: async ({ cwd: rawCwd, name, model, resume }) => {
+      const cwd = expandTilde(rawCwd);
       const id = newId();
       const resolvedModel = model ?? 'sonnet';
       const git = detectGitInfo(cwd);
@@ -284,9 +286,11 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
         lineHandler = makeFakeLineHandler(state);
       }
 
-      const args = resume
-        ? [...opts.claudeCommand.baseArgs, '--resume', resume]
-        : opts.claudeCommand.baseArgs;
+      const args = buildSpawnArgs({
+        baseArgs: opts.claudeCommand.baseArgs,
+        model: resolvedModel,
+        resume,
+      });
       console.log(
         `[claudevis] session.create id=${id} mode=${opts.mode} cwd=${cwd} cmd=${opts.claudeCommand.command} args=${JSON.stringify(args)}`,
       );
