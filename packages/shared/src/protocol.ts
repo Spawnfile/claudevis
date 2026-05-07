@@ -73,7 +73,18 @@ export type Event = BaseEvent &
   );
 
 export type Command =
-  | { type: 'session.create'; cwd: string; name?: string; model?: string; mode?: PermissionMode }
+  | {
+      type: 'session.create';
+      cwd: string;
+      name?: string;
+      model?: string;
+      mode?: PermissionMode;
+      /**
+       * M3b.3: when set, the server appends `--resume <id>` to the claude
+       * spawn args, restoring the prior session's history.
+       */
+      resume?: string;
+    }
   | { type: 'session.send'; sessionId: string; content: string }
   | { type: 'session.interrupt'; sessionId: string }
   | { type: 'session.clear'; sessionId: string }
@@ -93,7 +104,8 @@ export type ServerFrame =
   | { type: 'replay.done' }
   | { type: 'event'; event: Event }
   | { type: 'settings.status'; installed: boolean; loggedIn: boolean; version?: string }
-  | { type: 'skill.catalog'; skills: SkillEntry[] };
+  | { type: 'skill.catalog'; skills: SkillEntry[] }
+  | { type: 'session.resumable'; sessions: ResumableSession[] };
 
 export interface SkillEntry {
   name: string;
@@ -106,4 +118,19 @@ export interface SkillEntry {
   // through to the frontend. Optional to keep the change additive — clients
   // that don't set or read it see today's behavior.
   kind?: 'skill' | 'slash_command' | 'agent';
+}
+
+/**
+ * M3b.3: metadata for a session the user previously ran in this cwd that
+ * can be resumed via `claude --resume <id>`. Sourced from a filesystem scan
+ * of `~/.claude/projects/<encoded-cwd>/<uuid>.jsonl` on subscribe; emitted
+ * as a `session.resumable` ServerFrame to populate the frontend's "Resumable"
+ * section of SessionList.
+ */
+export interface ResumableSession {
+  id: string;
+  cwd: string;
+  name?: string;
+  model?: string;
+  lastActiveAt: number;
 }

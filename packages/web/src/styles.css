@@ -386,3 +386,64 @@ button.primary {
 .skill-drawer-entry.source-user .skill-drawer-entry-button {
   color: #d8e2f0;
 }
+
+.resumable-section {
+  margin-bottom: 12px;
+  border-bottom: 1px solid #1f2632;
+  padding-bottom: 8px;
+}
+.resumable-section > summary {
+  cursor: pointer;
+  padding: 4px 8px;
+  font-size: 12px;
+  color: #d8e2f0;
+  list-style: none;
+  user-select: none;
+}
+.resumable-section > summary:hover {
+  background: #161b24;
+}
+.resumable-section[open] > summary {
+  background: #161b24;
+  color: #ffb84d;
+}
+.resumable-list {
+  list-style: none;
+  padding: 0;
+  margin: 4px 0 0;
+}
+.resumable-entry {
+  margin: 0;
+}
+.resumable-entry-button {
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-left: 2px solid transparent;
+  padding: 4px 8px;
+  cursor: pointer;
+  font-family: inherit;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.resumable-entry-button:hover {
+  background: #161b24;
+  border-left-color: #ffb84d;
+}
+.resumable-entry-name {
+  font-size: 11px;
+  font-weight: bold;
+  color: #d8e2f0;
+  word-break: break-all;
+}
+.resumable-entry-cwd {
+  font-size: 10px;
+  color: #7a8699;
+  word-break: break-all;
+}
+.resumable-entry-meta {
+  font-size: 10px;
+  color: #7a8699;
+}

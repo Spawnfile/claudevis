@@ -1,4 +1,4 @@
-import type { Command, Event, ServerFrame, SkillEntry } from '@claudevis/shared';
+import type { Command, Event, ResumableSession, ServerFrame, SkillEntry } from '@claudevis/shared';
 import { create } from 'zustand';
 
 interface ConnectionState {
@@ -8,6 +8,7 @@ interface ConnectionState {
   events: Event[];
   catalog: SkillEntry[] | null;
   pendingPromptPrefix: string;
+  resumable: ResumableSession[];
   connect: (url: string) => void;
   send: (cmd: Command) => void;
   setPendingPromptPrefix: (s: string) => void;
@@ -25,6 +26,7 @@ export const useConnection = create<ConnectionState>((set, get) => ({
   events: [],
   catalog: null,
   pendingPromptPrefix: '',
+  resumable: [],
   connect: (url) => {
     // React 19 strict-mode mounts effects twice in development. Skip a second
     // connect to the same URL so we don't open two sockets and end up with
@@ -75,6 +77,10 @@ export const useConnection = create<ConnectionState>((set, get) => ({
           set({ catalog: frame.skills });
           return;
         }
+        case 'session.resumable': {
+          set({ resumable: frame.sessions });
+          return;
+        }
         default:
           return assertNever(frame);
       }
@@ -103,5 +109,6 @@ export const useConnection = create<ConnectionState>((set, get) => ({
       events: [],
       catalog: null,
       pendingPromptPrefix: '',
+      resumable: [],
     }),
 }));

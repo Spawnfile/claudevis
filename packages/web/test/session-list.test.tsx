@@ -1,3 +1,4 @@
+import type { ResumableSession } from '@claudevis/shared';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SessionList } from '../src/SessionList.js';
@@ -88,5 +89,114 @@ describe('SessionList — new-session form', () => {
       <SessionList activeSessionId="sess-1" onSelect={() => undefined} />,
     );
     expect(container.querySelector('.model-badge.model-opus')).not.toBeNull();
+  });
+});
+
+describe('SessionList — resumable section', () => {
+  beforeEach(() => {
+    useConnection.getState().reset();
+  });
+
+  afterEach(() => {
+    cleanup();
+    useConnection.setState({ send: () => undefined });
+  });
+
+  it('does NOT render the resumable section when resumable is empty', () => {
+    render(<SessionList activeSessionId={null} onSelect={() => undefined} />);
+    expect(screen.queryByText(/resumable/i)).not.toBeInTheDocument();
+  });
+
+  it('renders a collapsible Resumable section when resumable has entries', () => {
+    const sessions: ResumableSession[] = [
+      {
+        id: 'old-uuid-1',
+        cwd: '/path/to/project',
+        name: 'old session',
+        model: 'sonnet',
+        lastActiveAt: Date.now() - 1000 * 60 * 60,
+      },
+    ];
+    useConnection.setState({ resumable: sessions });
+    render(<SessionList activeSessionId={null} onSelect={() => undefined} />);
+    expect(screen.getByText(/resumable/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByText(/resumable/i));
+    expect(screen.getByText('old session')).toBeInTheDocument();
+  });
+
+  it('shows count in the summary label', () => {
+    const sessions: ResumableSession[] = [
+      { id: 'a', cwd: '/x', lastActiveAt: 1 },
+      { id: 'b', cwd: '/y', lastActiveAt: 2 },
+    ];
+    useConnection.setState({ resumable: sessions });
+    render(<SessionList activeSessionId={null} onSelect={() => undefined} />);
+    expect(screen.getByText(/resumable \(2\)/i)).toBeInTheDocument();
+  });
+
+  it('clicking a resumable entry dispatches session.create with resume field filled', () => {
+    const sent: unknown[] = [];
+    const sessions: ResumableSession[] = [
+      {
+        id: 'old-uuid-1',
+        cwd: '/path/to/project',
+        name: 'old',
+        model: 'opus',
+        lastActiveAt: Date.now(),
+      },
+    ];
+    useConnection.setState({
+      resumable: sessions,
+      send: (cmd) => {
+        sent.push(cmd);
+      },
+    });
+    render(<SessionList activeSessionId={null} onSelect={() => undefined} />);
+
+    fireEvent.click(screen.getByText(/resumable/i));
+    fireEvent.click(screen.getByText('old'));
+
+    expect(sent).toEqual([
+      {
+        type: 'session.create',
+        cwd: '/path/to/project',
+        name: 'old',
+        model: 'opus',
+        resume: 'old-uuid-1',
+      },
+    ]);
+  });
+
+  it('falls back to "resumed-<id-prefix>" for entries without a name and sonnet for missing model', () => {
+    const sent: unknown[] = [];
+    const sessions: ResumableSession[] = [
+      {
+        id: 'abcdef0123456789',
+        cwd: '/x',
+        lastActiveAt: Date.now(),
+      },
+    ];
+    useConnection.setState({
+      resumable: sessions,
+      send: (cmd) => {
+        sent.push(cmd);
+      },
+    });
+    render(<SessionList activeSessionId={null} onSelect={() => undefined} />);
+
+    fireEvent.click(screen.getByText(/resumable/i));
+    expect(screen.getByText(/resumed-abcdef01/i)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText(/resumed-abcdef01/i));
+
+    expect(sent).toEqual([
+      {
+        type: 'session.create',
+        cwd: '/x',
+        name: 'resumed-abcdef01',
+        model: 'sonnet',
+        resume: 'abcdef0123456789',
+      },
+    ]);
   });
 });

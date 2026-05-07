@@ -116,6 +116,15 @@ prompt (mustard pending card → click Allow/Deny/Always → green
 resolved card) and a hardcoded test catalog at startup so developers
 can iterate on the drawer UI without API spend.
 
+M3b.3 added the resumable session list: claudevis scans
+`~/.claude/projects/<encoded-cwd>/<uuid>.jsonl` on subscribe and the
+sidebar shows a collapsible "Resumable" section with previously-recorded
+sessions for this user (sorted newest-first; name + model extracted from
+the jsonl when present). Clicking a resumable entry restarts that
+session via `claude --resume <id>`, restoring its history. The projects
+directory location is overridable via the `CLAUDEVIS_PROJECTS_DIR`
+environment variable (default `~/.claude/projects/`).
+
 **Cost-discipline note:** real-mode probes (gated tests under
 `CLAUDEVIS_RUN_REAL=1`) should pin `--model sonnet` in their spawn
 args to keep API spend predictable. Higher-tier models can be
@@ -175,7 +184,7 @@ claudevis/
 - [x] M1 &mdash; Walking skeleton
 - [x] M2 &mdash; Real-CLI integration with stream-json line parser
 - [x] M3a &mdash; Subagent + file.changed synthesis, model dropdown, markdown rendering
-- [ ] M3b &mdash; Permission round-trip, skill drawer, `--resume` discovery
+- [x] M3b &mdash; Permission round-trip, skill drawer, `--resume` discovery
 - [ ] M3c &mdash; Isometric pixel-art rendering (PixiJS or alternative)
 - [ ] M4 &mdash; `claude login` OAuth, OBS broadcast mode, session persistence
 

@@ -111,6 +111,7 @@ export const CommandSchema = z.discriminatedUnion('type', [
     name: z.string().optional(),
     model: z.string().optional(),
     mode: PermissionMode.optional(),
+    resume: z.string().optional(),
   }),
   z.object({ type: z.literal('session.send'), sessionId: z.string(), content: z.string() }),
   z.object({ type: z.literal('session.interrupt'), sessionId: z.string() }),

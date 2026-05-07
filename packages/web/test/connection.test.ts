@@ -1,4 +1,4 @@
-import type { SkillEntry } from '@claudevis/shared';
+import type { ResumableSession, SkillEntry } from '@claudevis/shared';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { useConnection } from '../src/store/connection.js';
 
@@ -126,5 +126,32 @@ describe('connection store — M3b.2 catalog and pendingPromptPrefix', () => {
     useConnection.getState().reset();
     expect(useConnection.getState().catalog).toBeNull();
     expect(useConnection.getState().pendingPromptPrefix).toBe('');
+  });
+});
+
+describe('connection store — M3b.3 resumable slice', () => {
+  beforeEach(() => {
+    useConnection.getState().reset();
+  });
+
+  it('resumable defaults to empty array on fresh state', () => {
+    expect(useConnection.getState().resumable).toEqual([]);
+  });
+
+  it('reset() clears resumable to empty array', () => {
+    const sessions: ResumableSession[] = [{ id: 's1', cwd: '/x', lastActiveAt: 1000 }];
+    useConnection.setState({ resumable: sessions });
+    useConnection.getState().reset();
+    expect(useConnection.getState().resumable).toEqual([]);
+  });
+
+  it('setting resumable populates the slice', () => {
+    const sessions: ResumableSession[] = [
+      { id: 'a', cwd: '/x', name: 'old', model: 'sonnet', lastActiveAt: 1000 },
+      { id: 'b', cwd: '/y', lastActiveAt: 2000 },
+    ];
+    useConnection.setState({ resumable: sessions });
+    expect(useConnection.getState().resumable).toHaveLength(2);
+    expect(useConnection.getState().resumable[0]?.name).toBe('old');
   });
 });

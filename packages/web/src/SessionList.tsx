@@ -1,3 +1,4 @@
+import type { ResumableSession } from '@claudevis/shared';
 import { useState } from 'react';
 import { useConnection } from './store/connection.js';
 
@@ -10,6 +11,17 @@ interface SessionMeta {
 
 function isModel(s: string): s is Model {
   return s === 'sonnet' || s === 'opus' || s === 'haiku';
+}
+
+function timeAgo(ts: number): string {
+  const diff = Math.max(0, Date.now() - ts);
+  const minutes = Math.floor(diff / 60_000);
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
 }
 
 function NewSessionForm({ onClose }: { onClose: () => void }) {
@@ -70,6 +82,8 @@ export function SessionList({
   onSelect,
 }: { activeSessionId: string | null; onSelect: (id: string) => void }) {
   const events = useConnection((s) => s.events);
+  const resumable = useConnection((s) => s.resumable);
+  const send = useConnection((s) => s.send);
   const [formOpen, setFormOpen] = useState(false);
 
   const sessions = new Map<string, SessionMeta>();
@@ -80,8 +94,45 @@ export function SessionList({
     }
   }
 
+  const onClickResume = (entry: ResumableSession) => {
+    const name = entry.name ?? `resumed-${entry.id.slice(0, 8)}`;
+    const model = entry.model ?? 'sonnet';
+    send({
+      type: 'session.create',
+      cwd: entry.cwd,
+      name,
+      model,
+      resume: entry.id,
+    });
+  };
+
   return (
     <div>
+      {resumable.length > 0 && (
+        <details className="resumable-section">
+          <summary>Resumable ({resumable.length})</summary>
+          <ul className="resumable-list">
+            {resumable.map((entry) => {
+              const displayName = entry.name ?? `resumed-${entry.id.slice(0, 8)}`;
+              return (
+                <li key={entry.id} className="resumable-entry">
+                  <button
+                    type="button"
+                    className="resumable-entry-button"
+                    onClick={() => onClickResume(entry)}
+                  >
+                    <span className="resumable-entry-name">{displayName}</span>
+                    <span className="resumable-entry-cwd">{entry.cwd}</span>
+                    <span className="resumable-entry-meta">
+                      {entry.model ?? '?'} · {timeAgo(entry.lastActiveAt)}
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </details>
+      )}
       {formOpen ? (
         <NewSessionForm onClose={() => setFormOpen(false)} />
       ) : (

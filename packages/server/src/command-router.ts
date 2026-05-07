@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Command, ServerFrame, SkillEntry } from '@claudevis/shared';
 import type { EventStore } from './event-store.js';
+import { scanResumableSessions } from './resume-scanner.js';
 import type { SessionManager } from './session-manager.js';
 
 // Exhaustiveness helper — flagged at compile time when a Command case is
@@ -21,6 +22,12 @@ export interface CommandRouterDeps {
    * has produced a catalog yet.
    */
   getCatalog: () => SkillEntry[] | null;
+  /**
+   * M3b.3: directory scanned for resumable sessions on every subscribe.
+   * Default `~/.claude/projects/`; overridable via `CLAUDEVIS_PROJECTS_DIR`
+   * env var (resolved in index.ts).
+   */
+  projectsDir: string;
 }
 
 export type CommandHandler = (cmd: Command, send: (frame: ServerFrame) => void) => Promise<void>;
@@ -45,11 +52,16 @@ const protocolErrorEvent = (message: string): ServerFrame => ({
  * SessionManager and EventStore.
  */
 export function createCommandRouter(deps: CommandRouterDeps): CommandHandler {
-  const { mgr, store, getCatalog } = deps;
+  const { mgr, store, getCatalog, projectsDir } = deps;
   return async (cmd, send) => {
     switch (cmd.type) {
       case 'session.create':
-        await mgr.create({ cwd: cmd.cwd, name: cmd.name, model: cmd.model });
+        await mgr.create({
+          cwd: cmd.cwd,
+          name: cmd.name,
+          model: cmd.model,
+          resume: cmd.resume,
+        });
         return;
       case 'session.send':
         await mgr.send({ sessionId: cmd.sessionId, content: cmd.content });
@@ -81,6 +93,12 @@ export function createCommandRouter(deps: CommandRouterDeps): CommandHandler {
         if (catalog !== null) {
           send({ type: 'skill.catalog', skills: catalog });
         }
+        // M3b.3: scan and emit resumable sessions BEFORE replay.done so the
+        // client renders the Resumable section in the same sync barrier as
+        // the event history and skill catalog. The scan is best-effort: if
+        // projectsDir doesn't exist, scanResumableSessions returns [].
+        const resumable = await scanResumableSessions({ projectsDir });
+        send({ type: 'session.resumable', sessions: resumable });
         send({ type: 'replay.done' });
         return;
       }

@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import type { Event, ServerFrame, SkillEntry } from '@claudevis/shared';
 import WebSocket from 'ws';
 import { type CommandRouterDeps, createCommandRouter } from '../src/command-router.js';
@@ -42,18 +45,17 @@ interface TestServer {
   close: () => Promise<void>;
 }
 
-interface PartialMgr {
-  respondToPermission: CommandRouterDeps['mgr']['respondToPermission'];
-}
-
-const buildMgr = (
-  overrides: Partial<CommandRouterDeps['mgr']> & PartialMgr,
-): CommandRouterDeps['mgr'] => ({
+// `respondToPermission` was originally required (the only handler that
+// needed override-driven coverage in M3b.1). M3b.3 also needs to override
+// `create`, so all overrides are now optional with no-op defaults — callers
+// pass only the methods they care about.
+const buildMgr = (overrides: Partial<CommandRouterDeps['mgr']>): CommandRouterDeps['mgr'] => ({
   create: async () => 'sess-test',
   send: async () => {},
   interrupt: async () => {},
   clear: async () => {},
   kill: async () => {},
+  respondToPermission: async () => {},
   ...overrides,
 });
 
@@ -62,17 +64,20 @@ const emptyStore: CommandRouterDeps['store'] = {
   bySession: () => [] as Event[],
 };
 
-// `getCatalog` is required on CommandRouterDeps (M3b.2) but most tests don't
-// care about it. Accept a partial here and default to () => null so existing
-// callers can keep passing { mgr, store } without churn.
-type TestServerDeps = Omit<CommandRouterDeps, 'getCatalog'> &
-  Partial<Pick<CommandRouterDeps, 'getCatalog'>>;
+// `getCatalog` (M3b.2) and `projectsDir` (M3b.3) are required on
+// CommandRouterDeps but most tests don't care about them. Accept a partial
+// here and default both so existing callers can keep passing { mgr, store }
+// without churn. `projectsDir` defaults to '/dev/null' which fs.existsSync
+// reports as not-a-directory, so scanResumableSessions returns [].
+type TestServerDeps = Omit<CommandRouterDeps, 'getCatalog' | 'projectsDir'> &
+  Partial<Pick<CommandRouterDeps, 'getCatalog' | 'projectsDir'>>;
 
 async function startTestServer(deps: TestServerDeps): Promise<TestServer> {
   const onCommand = createCommandRouter({
     mgr: deps.mgr,
     store: deps.store,
     getCatalog: deps.getCatalog ?? (() => null),
+    projectsDir: deps.projectsDir ?? '/dev/null',
   });
   const wsServer = await startWsServer({ port: 0, onCommand });
   const ws = new WebSocket(`ws://127.0.0.1:${wsServer.port}/v1`);
@@ -235,6 +240,137 @@ describe('skill.catalog ServerFrame routing', () => {
 
       expect(t.frames.find((f) => f.type === 'skill.catalog')).toBeDefined();
       expect(t.frames.find((f) => f.type === 'replay.done')).toBeDefined();
+    } finally {
+      await t.close();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// session.resumable ServerFrame routing — T3 of M3b.3.
+//
+// On subscribe, the server scans `projectsDir` and emits a session.resumable
+// frame BEFORE replay.done. The frame is sent even when the scan returns []
+// so the client can definitively render an empty Resumable section rather
+// than guessing whether a frame might still arrive.
+// ---------------------------------------------------------------------------
+
+describe('session.resumable ServerFrame on subscribe', () => {
+  let tmpRoot: string;
+
+  beforeEach(() => {
+    tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'claudevis-ws-resume-'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  });
+
+  it('subscribe emits a session.resumable frame with discovered jsonl files', async () => {
+    const cwdDir = path.join(tmpRoot, '-tmp-x');
+    fs.mkdirSync(cwdDir);
+    fs.writeFileSync(path.join(cwdDir, 'session-1.jsonl'), '{"type":"x"}\n');
+
+    const mgr = buildMgr({});
+    const t = await startTestServer({
+      mgr,
+      store: emptyStore,
+      projectsDir: tmpRoot,
+    });
+    try {
+      t.send({ type: 'subscribe', sessionIds: '*', replay: false });
+      await waitForFrames(t.frames, 2);
+
+      const resumableFrame = t.frames.find((f) => f.type === 'session.resumable');
+      expect(resumableFrame).toBeDefined();
+      if (resumableFrame?.type === 'session.resumable') {
+        expect(resumableFrame.sessions).toHaveLength(1);
+        expect(resumableFrame.sessions[0]?.id).toBe('session-1');
+        expect(resumableFrame.sessions[0]?.cwd).toBe('/tmp/x');
+      }
+
+      // session.resumable must arrive BEFORE replay.done.
+      const resIdx = t.frames.findIndex((f) => f.type === 'session.resumable');
+      const doneIdx = t.frames.findIndex((f) => f.type === 'replay.done');
+      expect(resIdx).toBeLessThan(doneIdx);
+    } finally {
+      await t.close();
+    }
+  });
+
+  it('subscribe emits an empty session.resumable frame when projectsDir is empty', async () => {
+    const mgr = buildMgr({});
+    const t = await startTestServer({
+      mgr,
+      store: emptyStore,
+      projectsDir: tmpRoot,
+    });
+    try {
+      t.send({ type: 'subscribe', sessionIds: '*', replay: false });
+      await waitForFrames(t.frames, 2);
+
+      const resumableFrame = t.frames.find((f) => f.type === 'session.resumable');
+      expect(resumableFrame).toBeDefined();
+      if (resumableFrame?.type === 'session.resumable') {
+        expect(resumableFrame.sessions).toEqual([]);
+      }
+    } finally {
+      await t.close();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// session.create Command resume forwarding — T3 of M3b.3.
+//
+// The Command-level `resume` field must thread through to mgr.create so
+// SessionManager can append `--resume <id>` to the claude CLI invocation.
+// ---------------------------------------------------------------------------
+
+describe('session.create Command resume forwarding', () => {
+  it('passes resume field through to SessionManager.create', async () => {
+    const captured: Array<Record<string, unknown>> = [];
+    const mgr = buildMgr({
+      create: async (opts) => {
+        captured.push(opts);
+        return 'sess-fake';
+      },
+    });
+    const t = await startTestServer({ mgr, store: emptyStore });
+    try {
+      t.send({
+        type: 'session.create',
+        cwd: '/x',
+        name: 'resumed',
+        model: 'sonnet',
+        resume: 'old-session-id',
+      });
+      await new Promise((r) => setTimeout(r, 50));
+
+      expect(captured).toHaveLength(1);
+      expect(captured[0]?.resume).toBe('old-session-id');
+      expect(captured[0]?.cwd).toBe('/x');
+      expect(captured[0]?.name).toBe('resumed');
+    } finally {
+      await t.close();
+    }
+  });
+
+  it('passes undefined resume when omitted (backward compat)', async () => {
+    const captured: Array<Record<string, unknown>> = [];
+    const mgr = buildMgr({
+      create: async (opts) => {
+        captured.push(opts);
+        return 'sess-fake';
+      },
+    });
+    const t = await startTestServer({ mgr, store: emptyStore });
+    try {
+      t.send({ type: 'session.create', cwd: '/x' });
+      await new Promise((r) => setTimeout(r, 50));
+
+      expect(captured).toHaveLength(1);
+      expect(captured[0]?.resume).toBeUndefined();
     } finally {
       await t.close();
     }

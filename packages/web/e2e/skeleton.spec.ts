@@ -10,6 +10,29 @@ async function createSession(page: import('@playwright/test').Page) {
   await page.locator('.session').first().click();
 }
 
+test('resumable section renders synthetic projects-dir entry on subscribe', async ({ page }) => {
+  // M3b.3 T5: playwright.config.ts pre-populates a tmp CLAUDEVIS_PROJECTS_DIR
+  // with one synthetic session under the encoded cwd `-tmp-fake-resumable-cwd`
+  // and id `fake-session-uuid-12345`. On subscribe the server scans the dir
+  // and emits session.resumable; SessionList renders the <details> section.
+  await page.goto('/');
+  await expect(page.getByText('● connected')).toBeVisible({ timeout: 10_000 });
+
+  const summary = page.getByText(/resumable \(1\)/i);
+  await expect(summary).toBeVisible({ timeout: 5_000 });
+  await summary.click();
+
+  // No `summary` field in jsonl → display name falls back to
+  // `resumed-${id.slice(0,8)}` = `resumed-fake-ses`.
+  await expect(
+    page.locator('.resumable-entry-name', { hasText: 'resumed-fake-ses' }),
+  ).toBeVisible();
+  // `-tmp-fake-resumable-cwd` decodes to `/tmp/fake/resumable/cwd`.
+  await expect(
+    page.locator('.resumable-entry-cwd', { hasText: '/tmp/fake/resumable/cwd' }),
+  ).toBeVisible();
+});
+
 test('walking skeleton: create session, send prompt, receive echo', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByText('● connected')).toBeVisible({ timeout: 10_000 });

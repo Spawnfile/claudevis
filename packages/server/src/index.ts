@@ -1,11 +1,16 @@
 import type { Event, ServerFrame, SkillEntry } from '@claudevis/shared';
 import { createCommandRouter } from './command-router.js';
 import { createEventStore } from './event-store.js';
+import { defaultProjectsDir } from './resume-scanner.js';
 import { createSessionManager } from './session-manager.js';
 import { startWsServer } from './ws-server.js';
 
 const PORT = Number(process.env.CLAUDEVIS_PORT ?? 7878);
 const DB_PATH = process.env.CLAUDEVIS_DB ?? './claudevis.sqlite';
+// M3b.3: directory scanned on every subscribe to surface resumable sessions.
+// Defaults to claude CLI's `~/.claude/projects/`; overridable via env so tests
+// and alternate installations can point elsewhere.
+const PROJECTS_DIR = process.env.CLAUDEVIS_PROJECTS_DIR ?? defaultProjectsDir();
 
 // CLAUDEVIS_FAKE_CLAUDE=1 swaps to the fixture binary for local dev
 const fake = process.env.CLAUDEVIS_FAKE_CLAUDE === '1';
@@ -74,6 +79,7 @@ const onCommand = createCommandRouter({
   mgr,
   store,
   getCatalog: () => lastCatalog,
+  projectsDir: PROJECTS_DIR,
 });
 
 const server = await startWsServer({
