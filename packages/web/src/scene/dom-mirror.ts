@@ -24,7 +24,7 @@ export interface MirrorInput {
     { childSessionId?: string; parentSessionId: string; agentType?: string }
   >;
   sigils: Map<string, { autoDeny?: boolean; requestId: string }>;
-  glyphs: Map<string, { kind: string; sessionId: string }>;
+  glyphs: Map<string, { kind: string; sessionId: string; content?: string }>;
   toolIcons: Map<string, { name: string; sessionId: string }>;
 }
 
@@ -61,6 +61,7 @@ export function mirrorState(s: MirrorInput): void {
     d.setAttribute('data-scene-glyph-id', glyphId);
     d.setAttribute('data-scene-glyph-kind', g.kind);
     d.setAttribute('data-scene-glyph-session', g.sessionId);
+    if (g.content !== undefined) d.setAttribute('data-scene-glyph-content', g.content);
     el.appendChild(d);
   }
 
@@ -70,13 +71,5 @@ export function mirrorState(s: MirrorInput): void {
     d.setAttribute('data-scene-tool-name', tool.name);
     d.setAttribute('data-scene-tool-session', tool.sessionId);
     el.appendChild(d);
-  }
-}
-
-// Test-only reset
-export function _resetMirrorForTest(): void {
-  if (mirrorEl) {
-    mirrorEl.remove();
-    mirrorEl = null;
   }
 }

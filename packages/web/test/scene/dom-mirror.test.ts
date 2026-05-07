@@ -4,6 +4,15 @@ import { type MirrorInput, mirrorState } from '../../src/scene/dom-mirror';
 
 type NpcEntry = MirrorInput['npcs'] extends Map<string, infer V> ? V : never;
 type GlyphEntry = MirrorInput['glyphs'] extends Map<string, infer V> ? V : never;
+type ToolEntry = MirrorInput['toolIcons'] extends Map<string, infer V> ? V : never;
+
+const emptyInput = (): MirrorInput => ({
+  npcs: new Map(),
+  subagentNpcs: new Map(),
+  sigils: new Map(),
+  glyphs: new Map(),
+  toolIcons: new Map(),
+});
 
 describe('dom-mirror.mirrorState', () => {
   beforeEach(() => {
@@ -11,24 +20,12 @@ describe('dom-mirror.mirrorState', () => {
   });
 
   it('creates the mirror element on first call', () => {
-    mirrorState({
-      npcs: new Map(),
-      subagentNpcs: new Map(),
-      sigils: new Map(),
-      glyphs: new Map(),
-      toolIcons: new Map(),
-    });
+    mirrorState(emptyInput());
     expect(document.getElementById('scene-dom-mirror')).not.toBeNull();
   });
 
   it('mirror element is invisible (display: none)', () => {
-    mirrorState({
-      npcs: new Map(),
-      subagentNpcs: new Map(),
-      sigils: new Map(),
-      glyphs: new Map(),
-      toolIcons: new Map(),
-    });
+    mirrorState(emptyInput());
     const el = document.getElementById('scene-dom-mirror') as HTMLElement;
     expect(el.style.display).toBe('none');
   });
@@ -44,13 +41,7 @@ describe('dom-mirror.mirrorState', () => {
         { sessionId: 'session-2', model: 'opus', name: 's2', costUsd: 0.05, state: 'working' },
       ],
     ]);
-    mirrorState({
-      npcs,
-      subagentNpcs: new Map(),
-      sigils: new Map(),
-      glyphs: new Map(),
-      toolIcons: new Map(),
-    });
+    mirrorState({ ...emptyInput(), npcs });
     const els = document.querySelectorAll('[data-scene-npc-id]');
     expect(els).toHaveLength(2);
     expect(els[0]!.getAttribute('data-scene-npc-id')).toBe('session-1');
@@ -61,22 +52,13 @@ describe('dom-mirror.mirrorState', () => {
 
   it('replaces previous mirror state on each call (no stale entries)', () => {
     mirrorState({
+      ...emptyInput(),
       npcs: new Map([
         ['a', { sessionId: 'a', model: 'sonnet', name: '', costUsd: 0, state: 'idle' }],
       ]),
-      subagentNpcs: new Map(),
-      sigils: new Map(),
-      glyphs: new Map(),
-      toolIcons: new Map(),
     });
     expect(document.querySelectorAll('[data-scene-npc-id]')).toHaveLength(1);
-    mirrorState({
-      npcs: new Map(),
-      subagentNpcs: new Map(),
-      sigils: new Map(),
-      glyphs: new Map(),
-      toolIcons: new Map(),
-    });
+    mirrorState(emptyInput());
     expect(document.querySelectorAll('[data-scene-npc-id]')).toHaveLength(0);
   });
 
@@ -84,16 +66,37 @@ describe('dom-mirror.mirrorState', () => {
     const glyphs = new Map<string, GlyphEntry>([
       ['g1', { kind: 'parchment', sessionId: 'session-1' }],
     ]);
-    mirrorState({
-      npcs: new Map(),
-      subagentNpcs: new Map(),
-      sigils: new Map(),
-      glyphs,
-      toolIcons: new Map(),
-    });
+    mirrorState({ ...emptyInput(), glyphs });
     const el = document.querySelector('[data-scene-glyph-id="g1"]');
     expect(el).not.toBeNull();
     expect(el?.getAttribute('data-scene-glyph-kind')).toBe('parchment');
     expect(el?.getAttribute('data-scene-glyph-session')).toBe('session-1');
+    expect(el?.getAttribute('data-scene-glyph-content')).toBeNull();
+  });
+
+  it('writes data-scene-glyph-content when content is provided', () => {
+    const glyphs = new Map<string, GlyphEntry>([
+      ['g2', { kind: 'speech', sessionId: 'session-2', content: 'hello world' }],
+    ]);
+    mirrorState({ ...emptyInput(), glyphs });
+    const el = document.querySelector('[data-scene-glyph-id="g2"]');
+    expect(el).not.toBeNull();
+    expect(el?.getAttribute('data-scene-glyph-kind')).toBe('speech');
+    expect(el?.getAttribute('data-scene-glyph-content')).toBe('hello world');
+  });
+
+  it('writes data-scene-tool-call-id and tool name for attached tools', () => {
+    const toolIcons = new Map<string, ToolEntry>([
+      ['call-1', { name: 'Bash', sessionId: 'session-1' }],
+      ['call-2', { name: 'Read', sessionId: 'session-1' }],
+    ]);
+    mirrorState({ ...emptyInput(), toolIcons });
+    const els = document.querySelectorAll('[data-scene-tool-call-id]');
+    expect(els).toHaveLength(2);
+    expect(els[0]!.getAttribute('data-scene-tool-call-id')).toBe('call-1');
+    expect(els[0]!.getAttribute('data-scene-tool-name')).toBe('Bash');
+    expect(els[0]!.getAttribute('data-scene-tool-session')).toBe('session-1');
+    expect(els[1]!.getAttribute('data-scene-tool-call-id')).toBe('call-2');
+    expect(els[1]!.getAttribute('data-scene-tool-name')).toBe('Read');
   });
 });

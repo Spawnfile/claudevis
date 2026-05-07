@@ -9,7 +9,7 @@ const baseEvent = {
   sessionId: 'session-1',
 };
 
-describe('event-mapper.eventToMutations (M3c.1)', () => {
+describe('event-mapper.eventToMutations (M3c.1 + M3c.2a)', () => {
   it('session.started → spawnNpc mutation', () => {
     const e: Event = {
       ...baseEvent,
@@ -59,36 +59,66 @@ describe('event-mapper.eventToMutations (M3c.1)', () => {
     ]);
   });
 
-  it('user.prompt → empty array (M3c.2a fills this)', () => {
+  it('user.prompt → glyph parchment mutation (2s) with content', () => {
     const e: Event = {
       ...baseEvent,
       type: 'user.prompt',
       content: 'hello',
     };
-    expect(eventToMutations(e)).toEqual([]);
+    expect(eventToMutations(e)).toEqual([
+      {
+        kind: 'glyph',
+        sessionId: 'session-1',
+        sprite: 'glyphParchment',
+        durationMs: 2000,
+        content: 'hello',
+      },
+    ]);
   });
 
-  it('agent.thinking → empty array (M3c.2a fills)', () => {
+  it('agent.thinking → thoughtCloud mutation with content', () => {
     const e: Event = {
       ...baseEvent,
       type: 'agent.thinking',
       content: 'thinking...',
       streaming: false,
     };
-    expect(eventToMutations(e)).toEqual([]);
+    expect(eventToMutations(e)).toEqual([
+      { kind: 'thoughtCloud', sessionId: 'session-1', content: 'thinking...' },
+    ]);
   });
 
-  it('agent.message → empty array (M3c.2a fills)', () => {
+  it('agent.message → speechBubble mutation with content truncated to 40 chars', () => {
+    const longText = 'a'.repeat(100);
+    const e: Event = {
+      ...baseEvent,
+      type: 'agent.message',
+      content: longText,
+      streaming: false,
+    };
+    expect(eventToMutations(e)).toEqual([
+      {
+        kind: 'speechBubble',
+        sessionId: 'session-1',
+        content: 'a'.repeat(40),
+        durationMs: 3000,
+      },
+    ]);
+  });
+
+  it('agent.message → speechBubble mutation passes short content unchanged', () => {
     const e: Event = {
       ...baseEvent,
       type: 'agent.message',
       content: 'hi',
       streaming: false,
     };
-    expect(eventToMutations(e)).toEqual([]);
+    expect(eventToMutations(e)).toEqual([
+      { kind: 'speechBubble', sessionId: 'session-1', content: 'hi', durationMs: 3000 },
+    ]);
   });
 
-  it('tool.started → empty array (M3c.2a fills)', () => {
+  it('tool.started → attachTool mutation', () => {
     const e: Event = {
       ...baseEvent,
       type: 'tool.started',
@@ -96,10 +126,12 @@ describe('event-mapper.eventToMutations (M3c.1)', () => {
       name: 'Bash',
       input: {},
     };
-    expect(eventToMutations(e)).toEqual([]);
+    expect(eventToMutations(e)).toEqual([
+      { kind: 'attachTool', sessionId: 'session-1', callId: 'call-1', name: 'Bash' },
+    ]);
   });
 
-  it('tool.completed → empty array (M3c.2a fills)', () => {
+  it('tool.completed → retractTool mutation with ok status', () => {
     const e: Event = {
       ...baseEvent,
       type: 'tool.completed',
@@ -108,7 +140,23 @@ describe('event-mapper.eventToMutations (M3c.1)', () => {
       status: 'ok',
       durationMs: 100,
     };
-    expect(eventToMutations(e)).toEqual([]);
+    expect(eventToMutations(e)).toEqual([
+      { kind: 'retractTool', sessionId: 'session-1', callId: 'call-1', status: 'ok' },
+    ]);
+  });
+
+  it('tool.completed → retractTool mutation with error status', () => {
+    const e: Event = {
+      ...baseEvent,
+      type: 'tool.completed',
+      callId: 'call-2',
+      output: 'boom',
+      status: 'error',
+      durationMs: 100,
+    };
+    expect(eventToMutations(e)).toEqual([
+      { kind: 'retractTool', sessionId: 'session-1', callId: 'call-2', status: 'error' },
+    ]);
   });
 
   it('subagent.dispatched → empty array (M3c.2b fills)', () => {

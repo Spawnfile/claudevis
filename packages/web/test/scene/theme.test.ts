@@ -21,7 +21,8 @@ describe('theme palette in styles.css', () => {
     ['--ember', '#c4413c'],
     ['--parchment', '#efe1c0'],
     ['--moonlit', '#d8d2e8'],
-    ['--line', 'rgba(232, 165, 65, 0.18)'],
+    ['--torch-alpha-18', 'rgba(232, 165, 65, 0.18)'],
+    ['--line', 'var(--torch-alpha-18)'],
   ])('defines %s with value %s', (name, value) => {
     const re = new RegExp(
       `${name.replace(/-/g, '\\-')}\\s*:\\s*${value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*;`,

@@ -1,4 +1,4 @@
-// M3c.1 subset of sprites. M3c.2a/b extend with tool/mode/agent/glyph icons.
+// M3c.1 + M3c.2a subset of sprites. M3c.2b extends with lore-locked tool/mode/agent icons.
 // Paths are web-root-absolute; Vite serves `packages/web/public/` at /.
 
 export const SPRITES = {
@@ -10,6 +10,11 @@ export const SPRITES = {
   glyphStaminaBread: '/sprites/glyph-stamina-bread.svg',
   glyphStaminaCoin: '/sprites/glyph-stamina-coin.svg',
   glyphStaminaGold: '/sprites/glyph-stamina-gold.svg',
+  // M3c.2a additions
+  glyphParchment: '/sprites/glyph-parchment.svg',
+  glyphThought: '/sprites/glyph-thought.svg',
+  glyphSpeech: '/sprites/glyph-speech.svg',
+  toolGeneric: '/sprites/tool-generic.svg',
 } as const;
 
 export type SpriteName = keyof typeof SPRITES;

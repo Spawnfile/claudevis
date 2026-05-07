@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 12">
+  <!-- Cloud body, stepped polygon to suggest a puffy outline without curves -->
+  <polygon points="4,2 12,2 14,4 14,7 12,9 4,9 2,7 2,4" fill="#d8d2e8"/>
+  <!-- Inner highlight -->
+  <polygon points="5,3 11,3 13,5 13,6 11,8 5,8 3,6 3,5" fill="#efe1c0"/>
+  <!-- Trailing dots (cloud → bottom-left) -->
+  <rect x="2" y="10" width="2" height="1" fill="#d8d2e8"/>
+  <rect x="0" y="11" width="1" height="1" fill="#d8d2e8"/>
+</svg>

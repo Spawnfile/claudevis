@@ -297,3 +297,24 @@ test('scene panel mirrors NPC for active session', async ({ page }) => {
   const npc = mirror.locator('[data-scene-npc-id]').first();
   await expect(npc).toHaveAttribute('data-scene-npc-model', /sonnet|opus|haiku/);
 });
+
+test('user prompt produces a parchment glyph in the scene mirror (M3c.2a)', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.getByText('● connected')).toBeVisible({ timeout: 10_000 });
+
+  await createSession(page);
+
+  // Wait for the NPC mirror entry to confirm the scene mounted
+  const mirror = page.locator('#scene-dom-mirror');
+  await expect(mirror.locator('[data-scene-npc-id]').first()).toBeAttached({ timeout: 5_000 });
+
+  // Send a prompt via PromptBar
+  await page.getByPlaceholder('Type a prompt...').fill('plan a quest');
+  await page.getByPlaceholder('Type a prompt...').press('Enter');
+
+  // The parchment glyph appears briefly (durationMs=2000). Assert it's
+  // present with the right kind and content.
+  const glyph = mirror.locator('[data-scene-glyph-kind="parchment"]').first();
+  await expect(glyph).toBeAttached({ timeout: 4_000 });
+  await expect(glyph).toHaveAttribute('data-scene-glyph-content', 'plan a quest');
+});

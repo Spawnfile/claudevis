@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 12">
+  <!-- Bubble body -->
+  <rect x="1" y="1" width="18" height="8" fill="#efe1c0"/>
+  <!-- Bubble inner shade -->
+  <rect x="2" y="2" width="16" height="6" fill="#f7eed3"/>
+  <!-- Tail pointing down-left -->
+  <polygon points="4,9 7,9 5,12" fill="#efe1c0"/>
+  <!-- Three dots inside bubble -->
+  <rect x="6" y="4" width="1" height="2" fill="#7a5a44"/>
+  <rect x="9" y="4" width="1" height="2" fill="#7a5a44"/>
+  <rect x="12" y="4" width="1" height="2" fill="#7a5a44"/>
+</svg>
