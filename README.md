@@ -20,9 +20,10 @@ This repository ships:
 - **`packages/landing`** &mdash; the marketing/landing site served at
   `claudevis.com` (independent of the runtime).
 
-The current release is the M1 walking skeleton: end-to-end working
-with a fake echo subprocess so you can exercise the contract without
-the real CLI installed. Real-CLI integration arrives in M2.
+The current release is M2: real-CLI integration over `--output-format
+stream-json --input-format stream-json --verbose`. A fake-fixture mode
+remains available for UI iteration and contract self-testing without
+spawning the real CLI.
 
 ## Requirements
 
@@ -33,14 +34,16 @@ the real CLI installed. Real-CLI integration arrives in M2.
 | Node   | 20              |
 | Git    | any modern      |
 
-Optional (only needed once M2 lands):
+Required for real mode (default):
 
-- `claude` CLI on your `PATH`, signed in via `claude login`.
+- `claude` CLI on your `PATH` (v2.1.131+), signed in via `claude login`.
+
+Fake mode does not require the `claude` binary.
 
 ## Install
 
 ```bash
-git clone https://github.com/claudevis-app/claudevis.git
+git clone https://github.com/Spawnfile/claudevis.git
 cd claudevis
 pnpm install
 ```
@@ -51,31 +54,77 @@ binding through pnpm's lifecycle scripts.
 
 ## Run (development)
 
+### Real mode (default)
+
+Talks to the local `claude` binary. Two terminals:
+
+```bash
+# terminal 1: Bun server on :7878 (WebSocket at /v1), real claude
+pnpm --filter @claudevis/server dev
+
+# terminal 2: Vite on :5173
+pnpm --filter @claudevis/web dev
+```
+
+Open `http://localhost:5173/` in your browser. Requires `claude` on
+PATH and `claude login` already run.
+
+### Fake mode (no token cost)
+
 ```bash
 ./scripts/dev.sh
 ```
 
-This boots two processes:
+`scripts/dev.sh` boots both processes with `CLAUDEVIS_FAKE_CLAUDE=1`,
+so every prompt produces a scripted scene that exercises the full
+event vocabulary (thinking → tool calls → subagent dispatch → file
+changes → token usage → agent message). Use this for UI iteration
+and screenshot work without consuming API tokens.
 
-- The Bun server on `http://localhost:7878` (WebSocket at `/v1`).
-- Vite on `http://localhost:5173`, which proxies `/v1` to the server
-  so the browser uses a single same-origin port.
+### What real mode emits vs fake mode
 
-Open `http://localhost:5173/` in your browser.
-
-By default the server runs in **fake mode**
-(`CLAUDEVIS_FAKE_CLAUDE=1`): every prompt produces a scripted scene
-that exercises the full event vocabulary (thinking → tool calls →
-subagent dispatch → file changes → token usage → agent message). This
-is what you see today.
+The real `claude` CLI does not surface every event type the protocol
+supports. In real mode you will see: `session.started`,
+`agent.message`, `agent.thinking`, `tool.started`, `tool.completed`,
+`tokens.updated`, `error`, plus the locally-emitted `user.prompt`,
+`interrupt.signaled`, `session.ended`. In fake mode you additionally
+see: `subagent.dispatched`, `subagent.completed`, `file.changed`,
+`skill.invoked`, `permission.requested`, `permission.resolved`,
+`session.idle`, `session.mode.changed` &mdash; the fake fixture emits
+these so the frontend's exhaustive event renderer stays exercised.
 
 ## Tests
 
 ```bash
 pnpm test                                  # all unit tests (3 packages)
 pnpm typecheck                             # type-check all packages
-pnpm --filter @claudevis/web test:e2e      # Playwright end-to-end tests
+pnpm lint                                  # biome check
+pnpm --filter @claudevis/web test:e2e      # Playwright e2e (fake mode)
 ```
+
+### Real-mode end-to-end (gated)
+
+```bash
+CLAUDEVIS_RUN_REAL=1 \
+  pnpm --filter @claudevis/web test:e2e e2e/real-claude.spec.ts
+```
+
+Boots the server in real mode and drives the browser against the
+actual `claude` binary. Skipped by default to avoid token spend.
+
+### Real-CLI probe (refresh local fixtures)
+
+```bash
+CLAUDEVIS_RUN_REAL=1 pnpm --filter @claudevis/server test
+```
+
+Runs three scenarios (`greeting`, `tool-read`, `error`) against
+`claude` and writes captured NDJSON to
+`packages/server/test/fixtures/real-claude-captures/`. That directory
+is gitignored &mdash; the captures embed developer-local paths and
+session content from `~/.claude/`, so each contributor regenerates
+them locally. The parser's fixture-replay tests skip gracefully when
+the directory is empty.
 
 ## Layout
 
@@ -94,10 +143,13 @@ claudevis/
 
 ## Status
 
-- [x] M1 &mdash; Walking skeleton (this release)
-- [ ] M2 &mdash; Real-CLI integration with stream-json line parser
-- [ ] M3 &mdash; Isometric pixel-art rendering with PixiJS
-- [ ] M4 &mdash; Permissions, skill drawer, OBS broadcast mode
+- [x] M1 &mdash; Walking skeleton
+- [x] M2 &mdash; Real-CLI integration with stream-json line parser
+- [ ] M3 &mdash; Isometric pixel-art rendering with PixiJS; permission
+      round-trip; skill drawer; subagent + file-change synthesis from
+      tool calls
+- [ ] M4 &mdash; OBS broadcast mode, session persistence + `--resume`
+      discovery
 
 ## Disclaimer
 

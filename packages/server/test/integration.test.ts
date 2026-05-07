@@ -18,6 +18,7 @@ beforeEach(async () => {
     store,
     onEvent: (e: Event) => broadcast({ type: 'event', event: e }),
     claudeCommand: { command: 'bun', baseArgs: [FAKE] },
+    mode: 'fake',
   });
   server = await startWsServer({
     port: 0,
@@ -78,6 +79,55 @@ describe('end-to-end (websocket → session manager → fake claude)', () => {
     }
     expect(reply).toBeTruthy();
     expect((reply as { content: string }).content).toBe('echo: hello');
+
+    ws.send(JSON.stringify({ type: 'session.kill', sessionId }));
+    ws.close();
+  });
+
+  it('fake-mode emits the full Event vocabulary after a prompt', async () => {
+    const ws = new WebSocket(`ws://127.0.0.1:${server.port}/v1`);
+    const events: Event[] = [];
+    let sessionId: string | undefined;
+
+    ws.on('message', (data) => {
+      const frame = JSON.parse(data.toString()) as ServerFrame;
+      if (frame.type === 'event') {
+        events.push(frame.event);
+        if (frame.event.type === 'session.started') sessionId = frame.event.sessionId;
+      }
+    });
+
+    await new Promise((r) => ws.once('open', r));
+    ws.send(JSON.stringify({ type: 'session.create', cwd: process.cwd(), name: 'vocab-test' }));
+
+    for (let i = 0; i < 30 && !sessionId; i++) await new Promise((r) => setTimeout(r, 50));
+    expect(sessionId).toBeTruthy();
+
+    ws.send(JSON.stringify({ type: 'session.send', sessionId, content: 'vocab' }));
+
+    // Wait until agent.message arrives (it's last in the fixture's scripted scene)
+    let gotMessage = false;
+    for (let i = 0; i < 60 && !gotMessage; i++) {
+      gotMessage = events.some((e) => e.type === 'agent.message');
+      if (!gotMessage) await new Promise((r) => setTimeout(r, 50));
+    }
+
+    const types = new Set(events.map((e) => e.type));
+    const required = [
+      'session.started',
+      'user.prompt',
+      'agent.thinking',
+      'tool.started',
+      'tool.completed',
+      'subagent.dispatched',
+      'subagent.completed',
+      'file.changed',
+      'tokens.updated',
+      'agent.message',
+    ] as const;
+    for (const t of required) {
+      expect(types.has(t)).toBe(true);
+    }
 
     ws.send(JSON.stringify({ type: 'session.kill', sessionId }));
     ws.close();

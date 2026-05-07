@@ -1,24 +1,90 @@
 import { describe, expect, it } from 'bun:test';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { spawnSubprocess } from '../src/subprocess.js';
 
 const RUN = process.env.CLAUDEVIS_RUN_REAL === '1';
+const FIXTURE_DIR = join(import.meta.dir, 'fixtures', 'real-claude-captures');
+// Use the package directory (one level above test/) as cwd so the prompt for
+// reading package.json lands on a deterministic file regardless of where the
+// runner was invoked.
+const PROBE_CWD = join(import.meta.dir, '..');
+
+interface ProbeScenario {
+  name: string;
+  prompts: string[];
+  /** ms to wait after the last prompt before SIGINT */
+  settleMs: number;
+}
+
+const scenarios: ProbeScenario[] = [
+  { name: 'greeting', prompts: ['Reply with exactly the word: hello'], settleMs: 15_000 },
+  {
+    name: 'tool-read',
+    prompts: ['Read the file package.json and tell me the "name" field. Do not modify anything.'],
+    settleMs: 30_000,
+  },
+  {
+    name: 'error',
+    prompts: ['{not valid JSON for forcing a parse error path}'],
+    settleMs: 5_000,
+  },
+];
+
+async function runScenario(s: ProbeScenario): Promise<Array<Record<string, unknown>>> {
+  const sub = spawnSubprocess({
+    command: 'claude',
+    args: ['--output-format', 'stream-json', '--input-format', 'stream-json', '--verbose'],
+    cwd: PROBE_CWD,
+  });
+  const lines: Array<Record<string, unknown>> = [];
+  sub.onLine((l) => {
+    if (l !== null && typeof l === 'object') lines.push(l as Record<string, unknown>);
+  });
+
+  try {
+    for (const text of s.prompts) {
+      sub.write({
+        type: 'user',
+        message: { role: 'user', content: [{ type: 'text', text }] },
+      });
+    }
+    await new Promise((r) => setTimeout(r, s.settleMs));
+    sub.signal('SIGINT');
+  } finally {
+    // Always wait for the child to exit, even if write/sleep threw — the
+    // close() in subprocess.ts is now safe to call after exit.
+    await sub.close();
+  }
+  return lines;
+}
+
+function writeFixture(name: string, lines: Array<Record<string, unknown>>): void {
+  mkdirSync(FIXTURE_DIR, { recursive: true });
+  const path = join(FIXTURE_DIR, `${name}.ndjson`);
+  writeFileSync(path, `${lines.map((l) => JSON.stringify(l)).join('\n')}\n`);
+  console.log(`[probe] ${name}: ${lines.length} lines -> ${path}`);
+}
+
+// Asserts the captured stream contains at least one system/init event so we
+// know the probe actually connected to claude rather than catching only an
+// early error line.
+function assertProbeConnected(lines: Array<Record<string, unknown>>, name: string): void {
+  const init = lines.find((l) => l.type === 'system' && l.subtype === 'init');
+  if (!init) {
+    throw new Error(
+      `[probe:${name}] no system/init line captured — stream-json mode never connected. Captured ${lines.length} line(s).`,
+    );
+  }
+}
 
 describe.skipIf(!RUN)('real claude probe (CLAUDEVIS_RUN_REAL=1)', () => {
-  it('captures stream-json output for 10 seconds', async () => {
-    const sub = spawnSubprocess({
-      command: 'claude',
-      args: ['--output-format', 'stream-json', '--input-format', 'stream-json', '--verbose'],
-      cwd: process.cwd(),
-    });
-    const lines: unknown[] = [];
-    sub.onLine((l) => lines.push(l));
-
-    sub.write({ type: 'user', content: 'say hello' });
-    await new Promise((r) => setTimeout(r, 10_000));
-    sub.signal('SIGINT');
-    await sub.close();
-
-    console.log(JSON.stringify(lines, null, 2));
-    expect(lines.length).toBeGreaterThan(0);
-  }, 30_000);
+  for (const s of scenarios) {
+    it(`captures stream-json for scenario: ${s.name}`, async () => {
+      const lines = await runScenario(s);
+      writeFixture(s.name, lines);
+      expect(lines.length).toBeGreaterThan(0);
+      assertProbeConnected(lines, s.name);
+    }, 120_000);
+  }
 });

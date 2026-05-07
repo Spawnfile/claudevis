@@ -46,13 +46,30 @@ export function spawnSubprocess(opts: SubprocessOptions): SubprocessHandle {
         const parsed = JSON.parse(line);
         for (const fn of lineSubs) fn(parsed);
       } catch {
-        // log non-JSON for debugging — silently ignore for now
+        // Non-JSON line on stdout — surface so we can diagnose subprocesses
+        // that print plaintext errors / banners to stdout instead of NDJSON.
+        console.error(`[claudevis] subprocess stdout (non-JSON): ${line.slice(0, 500)}`);
       }
     }
   });
 
-  child.on('exit', (code) => {
+  // stderr was previously discarded. Surface every stderr chunk so claude's
+  // error messages, auth prompts, and warnings actually reach the developer.
+  child.stderr.setEncoding('utf8');
+  child.stderr.on('data', (chunk) => {
+    const text = String(chunk).trimEnd();
+    if (text) console.error(`[claudevis] subprocess stderr: ${text}`);
+  });
+
+  child.on('exit', (code, signal) => {
+    if (code !== null && code !== 0) {
+      console.error(`[claudevis] subprocess exit code=${code} signal=${signal ?? '-'}`);
+    }
     for (const fn of exitSubs) fn(code);
+  });
+
+  child.on('error', (err) => {
+    console.error(`[claudevis] subprocess error: ${err.message}`);
   });
 
   return {
@@ -68,8 +85,19 @@ export function spawnSubprocess(opts: SubprocessOptions): SubprocessHandle {
     },
     close: () =>
       new Promise<void>((resolve) => {
+        // If the child already exited before close() was called, the 'exit'
+        // event has already fired and won't fire again — resolve immediately
+        // so we don't hang.
+        if (child.exitCode !== null || child.signalCode !== null) {
+          resolve();
+          return;
+        }
         child.once('exit', () => resolve());
-        child.stdin.end();
+        try {
+          child.stdin.end();
+        } catch {
+          // stdin may already be closed if the child died mid-shutdown
+        }
         setTimeout(() => {
           if (!child.killed) child.kill('SIGTERM');
         }, 500);

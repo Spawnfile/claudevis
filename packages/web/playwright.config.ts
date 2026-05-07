@@ -1,12 +1,16 @@
 import { defineConfig } from '@playwright/test';
 
+const REAL = process.env.CLAUDEVIS_RUN_REAL === '1';
+// In real mode, do NOT set CLAUDEVIS_FAKE_CLAUDE so index.ts defaults to real.
+const fakeEnv = REAL ? '' : 'CLAUDEVIS_FAKE_CLAUDE=1 ';
+
 export default defineConfig({
   testDir: './e2e',
-  timeout: 30_000,
+  // Real mode talks to a live model — give it more wall time per test.
+  timeout: REAL ? 120_000 : 30_000,
   webServer: [
     {
-      command:
-        'CLAUDEVIS_FAKE_CLAUDE=1 CLAUDEVIS_DB=:memory: CLAUDEVIS_PORT=7879 bun ../server/src/index.ts',
+      command: `${fakeEnv}CLAUDEVIS_DB=:memory: CLAUDEVIS_PORT=7879 bun ../server/src/index.ts`,
       port: 7879,
       reuseExistingServer: false,
     },

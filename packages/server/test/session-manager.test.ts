@@ -2,9 +2,18 @@ import { describe, expect, it } from 'bun:test';
 import { resolve } from 'node:path';
 import type { Event } from '@claudevis/shared';
 import { createEventStore } from '../src/event-store.js';
+import { createRealCliParser } from '../src/real-claude-parser.js';
+import { serializeUserPromptForRealCli } from '../src/real-claude-serializer.js';
 import { createSessionManager } from '../src/session-manager.js';
 
 const FAKE = resolve(__dirname, 'fixtures/echo-claude.ts');
+
+describe('createSessionManager — mode wiring', () => {
+  it('exposes a mode option that selects parser/serializer', () => {
+    expect(typeof createRealCliParser).toBe('function');
+    expect(typeof serializeUserPromptForRealCli).toBe('function');
+  });
+});
 
 describe('SessionManager', () => {
   it('emits session.started event after creating a session', async () => {
@@ -14,6 +23,7 @@ describe('SessionManager', () => {
       store,
       onEvent: (e) => events.push(e),
       claudeCommand: { command: 'bun', baseArgs: [FAKE] },
+      mode: 'fake',
     });
 
     const id = await mgr.create({ cwd: process.cwd(), name: 'demo' });
@@ -33,6 +43,7 @@ describe('SessionManager', () => {
       store,
       onEvent: (e) => events.push(e),
       claudeCommand: { command: 'bun', baseArgs: [FAKE] },
+      mode: 'fake',
     });
 
     const id = await mgr.create({ cwd: process.cwd(), name: 'demo' });

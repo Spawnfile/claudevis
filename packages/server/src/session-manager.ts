@@ -2,10 +2,12 @@ import { randomUUID } from 'node:crypto';
 import type { Event } from '@claudevis/shared';
 import type { EventStore } from './event-store.js';
 import { detectGitInfo } from './git-info.js';
+import { type ParserContext, createRealCliParser } from './real-claude-parser.js';
+import { serializeUserPromptForRealCli } from './real-claude-serializer.js';
 import { type SubprocessHandle, spawnSubprocess } from './subprocess.js';
 
 export interface SessionManager {
-  create(opts: { cwd: string; name?: string; model?: string }): Promise<string>;
+  create(opts: { cwd: string; name?: string; model?: string; resume?: string }): Promise<string>;
   send(opts: { sessionId: string; content: string }): Promise<void>;
   interrupt(sessionId: string): Promise<void>;
   clear(sessionId: string): Promise<void>;
@@ -18,6 +20,8 @@ export interface SessionManagerOptions {
   store: EventStore;
   onEvent: (e: Event) => void;
   claudeCommand: { command: string; baseArgs: string[] };
+  /** 'real' parses claude stream-json; 'fake' passes through fixture lines. */
+  mode: 'fake' | 'real';
 }
 
 interface SessionState {
@@ -37,6 +41,9 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
   const sessions = new Map<string, SessionState>();
 
   const emit = (e: Event) => {
+    if (process.env.CLAUDEVIS_DEBUG === '1') {
+      console.log(`[claudevis] emit type=${e.type} sessionId=${e.sessionId}`);
+    }
     opts.store.append(e);
     opts.onEvent(e);
   };
@@ -45,7 +52,7 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
   // EAGERLY into spawnSubprocess (see SubprocessOptions.onLine docstring).
   // This guarantees the very first line — typically `session.started` —
   // is never lost to a startup race.
-  const makeLineHandler = (state: SessionState) => (raw: unknown) => {
+  const makeFakeLineHandler = (state: SessionState) => (raw: unknown) => {
     const line = raw as { type?: string } & Record<string, unknown>;
     if (typeof line.type !== 'string') return;
     const base = { id: newEventId(), ts: Date.now(), sessionId: state.id };
@@ -226,7 +233,7 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
   };
 
   return {
-    create: async ({ cwd, name, model }) => {
+    create: async ({ cwd, name, model, resume }) => {
       const id = newId();
       const resolvedModel = model ?? 'sonnet';
       const git = detectGitInfo(cwd);
@@ -243,15 +250,80 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
         // biome-ignore lint/suspicious/noExplicitAny: hole filled synchronously
         sub: undefined as any,
       };
-      const lineHandler = makeLineHandler(state);
-      state.sub = spawnSubprocess({
-        command: opts.claudeCommand.command,
-        args: opts.claudeCommand.baseArgs,
-        cwd,
-        onLine: lineHandler,
-      });
+
+      let lineHandler: (raw: unknown) => void;
+      if (opts.mode === 'real') {
+        const parserCtx: ParserContext = {
+          sessionId: id,
+          name: state.name,
+          cwd,
+          model: resolvedModel,
+          repo: git.repo,
+          branch: git.branch,
+          newEventId,
+          now: () => Date.now(),
+          // Suppress parser-side session.started — emitted proactively below
+          // so the UI shows the session as soon as the subprocess spawns,
+          // without waiting for SessionStart hooks (which can take several
+          // seconds before the delayed `system/init` line lands).
+          emitSessionStartedFromInit: false,
+        };
+        const parse = createRealCliParser(parserCtx);
+        lineHandler = (raw) => {
+          if (process.env.CLAUDEVIS_DEBUG === '1') {
+            const r = raw as { type?: string; subtype?: string };
+            console.log(`[claudevis] line type=${r?.type} subtype=${r?.subtype ?? '-'} sess=${id}`);
+          }
+          const events = parse(raw);
+          if (process.env.CLAUDEVIS_DEBUG === '1' && events.length === 0) {
+            console.log('[claudevis]   -> dropped (parser returned 0 events)');
+          }
+          for (const ev of events) emit(ev);
+        };
+      } else {
+        lineHandler = makeFakeLineHandler(state);
+      }
+
+      const args = resume
+        ? [...opts.claudeCommand.baseArgs, '--resume', resume]
+        : opts.claudeCommand.baseArgs;
+      console.log(
+        `[claudevis] session.create id=${id} mode=${opts.mode} cwd=${cwd} cmd=${opts.claudeCommand.command} args=${JSON.stringify(args)}`,
+      );
+      try {
+        state.sub = spawnSubprocess({
+          command: opts.claudeCommand.command,
+          args,
+          cwd,
+          onLine: lineHandler,
+        });
+        console.log(`[claudevis] session.create spawned pid=${state.sub.pid}`);
+      } catch (err) {
+        console.error(`[claudevis] session.create spawn FAILED: ${(err as Error).message}`);
+        throw err;
+      }
       sessions.set(id, state);
       wireExit(state);
+
+      // Real-mode: claude doesn't emit `system/init` until SessionStart hooks
+      // finish, which can take seconds. Emit session.started locally now so
+      // the session card appears in the UI immediately. The parser is
+      // configured with emitSessionStartedFromInit:false above, so when init
+      // eventually arrives it is silently latched, not re-emitted.
+      if (opts.mode === 'real') {
+        emit({
+          id: newEventId(),
+          ts: Date.now(),
+          sessionId: id,
+          type: 'session.started',
+          name: state.name,
+          cwd,
+          model: resolvedModel,
+          repo: git.repo,
+          branch: git.branch,
+        });
+      }
+
       return id;
     },
     send: async ({ sessionId, content }) => {
@@ -264,7 +336,11 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
         type: 'user.prompt',
         content,
       });
-      s.sub.write({ type: 'user.prompt', content });
+      const payload =
+        opts.mode === 'real'
+          ? serializeUserPromptForRealCli(content)
+          : { type: 'user.prompt', content };
+      s.sub.write(payload);
     },
     interrupt: async (sessionId) => {
       const s = sessions.get(sessionId);

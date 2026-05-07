@@ -43,3 +43,14 @@ bun.lockb
 packages/web/test-results/
 packages/web/playwright-report/
 docs/
+
+# real-cli probe captures contain developer-local paths and session content
+# from ~/.claude/. Each contributor regenerates these locally with
+# CLAUDEVIS_RUN_REAL=1 pnpm --filter @claudevis/server test
+packages/server/test/fixtures/real-claude-captures/
+
+# runtime sqlite databases (created by `pnpm --filter @claudevis/server dev`)
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm

@@ -21,14 +21,19 @@ export async function startWsServer(opts: WsServerOptions): Promise<WsServer> {
 
   wss.on('connection', (ws) => {
     clients.add(ws);
+    console.log(`[claudevis] ws connect — clients=${clients.size}`);
     const send = (frame: ServerFrame) => {
       if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(frame));
     };
-    ws.on('close', () => clients.delete(ws));
+    ws.on('close', () => {
+      clients.delete(ws);
+      console.log(`[claudevis] ws disconnect — clients=${clients.size}`);
+    });
     ws.on('message', async (raw) => {
       let parsed: Command;
       try {
         parsed = CommandSchema.parse(JSON.parse(raw.toString()));
+        console.log(`[claudevis] cmd: ${parsed.type}`);
       } catch (err) {
         send({
           type: 'event',
