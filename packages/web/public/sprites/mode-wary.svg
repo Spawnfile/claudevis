@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 12 12">
+  <!-- Shield body (Wary slate #3a4d6a) — kite polygon -->
+  <polygon points="6,1 10,3 10,7 6,11 2,7 2,3" fill="#3a4d6a"/>
+  <!-- Inner highlight -->
+  <polygon points="6,2 9,4 9,7 6,9 3,7 3,4" fill="#5a6d8a"/>
+  <!-- Central rivet (torch) -->
+  <rect x="5" y="5" width="2" height="2" fill="#e8a541"/>
+  <!-- Cross-band -->
+  <rect x="2" y="6" width="8" height="1" fill="#1a1a2a"/>
+</svg>

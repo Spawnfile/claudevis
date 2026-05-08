@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">
+  <!-- Outer diamond ward (ember red) -->
+  <polygon points="8,1 15,8 8,15 1,8" fill="#c4413c"/>
+  <!-- Inner ward (torch glow) -->
+  <polygon points="8,3 13,8 8,13 3,8" fill="#e8a541"/>
+  <!-- Core (parchment) -->
+  <polygon points="8,5 11,8 8,11 5,8" fill="#efe1c0"/>
+  <!-- Question stroke -->
+  <rect x="7" y="6" width="2" height="3" fill="#1a1410"/>
+  <rect x="7" y="10" width="2" height="1" fill="#1a1410"/>
+</svg>

@@ -318,3 +318,61 @@ test('user prompt produces a parchment glyph in the scene mirror (M3c.2a)', asyn
   await expect(glyph).toBeAttached({ timeout: 4_000 });
   await expect(glyph).toHaveAttribute('data-scene-glyph-content', 'plan a quest');
 });
+
+test('permission request renders an interactive sigil in the scene mirror (M3c.2b)', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await expect(page.getByText('● connected')).toBeVisible({ timeout: 10_000 });
+
+  await createSession(page);
+
+  const mirror = page.locator('#scene-dom-mirror');
+  await expect(mirror.locator('[data-scene-npc-id]').first()).toBeAttached({ timeout: 5_000 });
+
+  // Trigger an interactive permission via the M3b.1 sentinel.
+  await page.getByPlaceholder('Type a prompt...').fill('/permission-test');
+  await page.getByPlaceholder('Type a prompt...').press('Enter');
+
+  // Sigil mirror entry appears with mode=interactive and tool-name=Bash
+  // (the fake fixture issues a Bash permission for /permission-test).
+  const sigil = mirror.locator('[data-scene-sigil-mode="interactive"]').first();
+  await expect(sigil).toBeAttached({ timeout: 5_000 });
+  await expect(sigil).toHaveAttribute('data-scene-sigil-tool-name', 'Bash');
+
+  // The chat permission card is also present (M3b.1 contract).
+  const card = page
+    .locator('[data-evtype="permission.requested"]')
+    .filter({ has: page.getByText('Bash') })
+    .first();
+  await expect(card).toBeVisible();
+});
+
+test('default scripted prompt increments the subagent spawn count in the mirror (M3c.2b)', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await expect(page.getByText('● connected')).toBeVisible({ timeout: 10_000 });
+
+  await createSession(page);
+
+  const mirror = page.locator('#scene-dom-mirror');
+  await expect(mirror.locator('[data-scene-npc-id]').first()).toBeAttached({ timeout: 5_000 });
+
+  // Default scripted scene emits subagent.dispatched (with agentType="Explore")
+  // followed ~10ms later by subagent.completed. The in-flight subagent state
+  // is unobservable to Playwright (whose default polling is 100ms), so we
+  // assert on the cumulative subagent-spawn-count attribute — which increments
+  // on spawn and never decrements, surviving the immediate teardown.
+  await page.getByPlaceholder('Type a prompt...').fill('go forth');
+  await page.getByPlaceholder('Type a prompt...').press('Enter');
+
+  const counter = mirror.locator('[data-scene-subagent-spawn-count]');
+  await expect(counter).toBeAttached({ timeout: 5_000 });
+  // Robust assertion: count >= 1 (could be higher if a prior test in the same
+  // browser context already triggered a dispatch, since scene state persists
+  // across tests in skeleton.spec).
+  const countAttr = await counter.getAttribute('data-scene-subagent-spawn-count');
+  expect(countAttr).not.toBeNull();
+  expect(Number.parseInt(countAttr!, 10)).toBeGreaterThanOrEqual(1);
+});

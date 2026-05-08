@@ -5,7 +5,7 @@ import { mirrorState } from './dom-mirror';
 import { eventToMutations } from './event-mapper';
 import { npcLayoutSlot, tileToScreen } from './grid';
 import { MODEL_COLORS, STAMINA_GLYPH } from './lore-colors';
-import { SPRITES } from './sprite-manifest';
+import { AGENT_SPRITE_KEY, SPRITES, type SpriteName, TOOL_SPRITE_KEY } from './sprite-manifest';
 import { costToSegments } from './stamina';
 import { PALETTE, SPRITE, TILE } from './theme';
 import type { Mutation, NpcSnapshot } from './types';
@@ -20,7 +20,7 @@ interface NpcView {
   staminaSegments: Container;
 }
 
-type GlyphKind = 'parchment' | 'thought' | 'speech';
+type GlyphKind = 'parchment' | 'thought' | 'speech' | 'skill';
 
 interface GlyphView {
   kind: GlyphKind;
@@ -34,6 +34,24 @@ interface ToolIconView {
   callId: string;
   sessionId: string;
   name: string;
+  sprite: Sprite;
+}
+
+interface SubagentNpcView {
+  childSessionId: string;
+  parentSessionId: string;
+  agentType: string;
+  sprite: Sprite;
+  badgeSprite: Sprite | null;
+  container: Container;
+  deepDispatch: boolean;
+}
+
+interface SigilView {
+  requestId: string;
+  sessionId: string;
+  toolName: string;
+  autoDeny: boolean;
   sprite: Sprite;
 }
 
@@ -137,6 +155,14 @@ export function createScene(app: Application): Scene {
   const glyphs = new Map<string, GlyphView>();
   const toolIcons = new Map<string, ToolIconView>();
   let nextSlotIdx = 0;
+  // M3c.2b state: subagent recursion + sigils + archive
+  const subagentNpcs = new Map<string, SubagentNpcView>();
+  const subagentRings = new Map<string, Sprite>(); // keyed by parentCallId — paired with matching subagent.completed
+  const subagentDepths = new Map<string, number>(); // sessionId → depth in dispatch chain (root = 0)
+  const subagentChildOrder = new Map<string, number>(); // parentSessionId → next sibling slot offset
+  const sigils = new Map<string, SigilView>(); // requestId → SigilView
+  let archiveCount = 0;
+  let subagentSpawnCount = 0; // cumulative spawn counter; never decrements (timing-robust e2e signal)
   let activeSessionId: string | null = null;
   void activeSessionId;
 
@@ -208,6 +234,7 @@ export function createScene(app: Application): Scene {
       staminaGlyph,
       staminaSegments,
     });
+    subagentDepths.set(sessionId, 0);
   }
 
   function removeNpc(sessionId: string): void {
@@ -223,6 +250,8 @@ export function createScene(app: Application): Scene {
     if (!view) return;
     spriteLayer.removeChild(view.container);
     view.container.destroy({ children: true });
+    subagentDepths.delete(sessionId);
+    subagentChildOrder.delete(sessionId);
     npcs.delete(sessionId);
     syncMirror();
   }
@@ -306,7 +335,8 @@ export function createScene(app: Application): Scene {
     const view = npcs.get(sessionId);
     if (!view) return;
     if (toolIcons.has(callId)) return; // idempotent on duplicate tool.started
-    const sprite = Sprite.from(SPRITES.toolGeneric);
+    const spriteKey = (TOOL_SPRITE_KEY[name] ?? 'toolGeneric') as SpriteName;
+    const sprite = Sprite.from(SPRITES[spriteKey]);
     sprite.anchor.set(0, 1);
     sprite.position.set(SPRITE.npcW / 2 + 2, TILE.h / 2 - 4);
     sprite.width = 12;
@@ -321,6 +351,209 @@ export function createScene(app: Application): Scene {
     if (tv.sprite.parent) tv.sprite.parent.removeChild(tv.sprite);
     tv.sprite.destroy();
     toolIcons.delete(callId);
+  }
+
+  function spawnSubagentRing(parentSessionId: string, parentCallId: string): void {
+    const parent = npcs.get(parentSessionId);
+    if (!parent) return;
+    if (subagentRings.has(parentCallId)) return; // idempotent on duplicate dispatch
+    const ring = Sprite.from(SPRITES.summonRing);
+    ring.anchor.set(0.5, 0.5);
+    ring.position.set(0, TILE.h / 2);
+    // Iso-correct flat ellipse: 64×32 follows the village's 2:1 iso projection.
+    // A 64×64 ring would look like a screen-space circle and break the
+    // moonlit-village visual grammar.
+    ring.width = TILE.w;
+    ring.height = TILE.h;
+    ring.zIndex = -1; // behind the NPC body
+    parent.container.addChildAt(ring, 0);
+    subagentRings.set(parentCallId, ring);
+  }
+
+  function removeSubagentRing(parentCallId: string): void {
+    const ring = subagentRings.get(parentCallId);
+    if (!ring) return;
+    if (ring.parent) ring.parent.removeChild(ring);
+    ring.destroy();
+    subagentRings.delete(parentCallId);
+  }
+
+  function spawnSubagentNpc(
+    childSessionId: string,
+    parentSessionId: string,
+    agentType: string,
+  ): void {
+    if (subagentNpcs.has(childSessionId)) return; // idempotent on duplicate dispatch
+    const parent = npcs.get(parentSessionId);
+    if (!parent) return;
+    const parentDepth = subagentDepths.get(parentSessionId) ?? 0;
+    const childDepth = parentDepth + 1;
+    subagentDepths.set(childSessionId, childDepth);
+
+    // Recursion cap per design §4.5: depth ≥ 4 marks the child as a deep-
+    // dispatch placeholder. M3c.2b structural form: smaller sprite, no agent
+    // badge, mirror entry flagged deepDispatch=true so e2e can detect. Each
+    // deep-dispatch child still gets its own container — true "single per-chain
+    // placeholder" collapse with the 🌀 Deep dispatch PIXI.Text label is
+    // M3c.3 polish (depends on the animator landing first).
+    const deepDispatch = childDepth >= 4;
+
+    const container = new Container();
+    // Stack child above parent: same screen col, y -= 24 logical per depth.
+    // Multiple children of same parent shift left/right by 16 px (sibling slot).
+    const siblingIdx = subagentChildOrder.get(parentSessionId) ?? 0;
+    subagentChildOrder.set(parentSessionId, siblingIdx + 1);
+    const xOffset = (siblingIdx % 2 === 0 ? 1 : -1) * Math.ceil(siblingIdx / 2) * 16;
+    const yOffset = -24 * childDepth;
+    container.position.set(
+      parent.container.position.x + xOffset,
+      parent.container.position.y + yOffset,
+    );
+    container.zIndex = parent.container.zIndex - childDepth;
+
+    const sprite = Sprite.from(SPRITES.npc);
+    sprite.anchor.set(0.5, 1);
+    sprite.position.set(0, 0);
+    // Smaller scale for child NPCs to differentiate from root villagers.
+    sprite.width = SPRITE.npcW * 0.7;
+    sprite.height = SPRITE.npcH * 0.7;
+    container.addChild(sprite);
+
+    let badgeSprite: Sprite | null = null;
+    if (!deepDispatch) {
+      const badgeKey = (AGENT_SPRITE_KEY[agentType] ?? 'badgeWanderer') as SpriteName;
+      badgeSprite = Sprite.from(SPRITES[badgeKey]);
+      badgeSprite.anchor.set(0.5, 1);
+      badgeSprite.position.set(0, -SPRITE.npcH * 0.7 - 2);
+      badgeSprite.width = 10;
+      badgeSprite.height = 10;
+      container.addChild(badgeSprite);
+    }
+
+    spriteLayer.addChild(container);
+
+    subagentNpcs.set(childSessionId, {
+      childSessionId,
+      parentSessionId,
+      agentType,
+      sprite,
+      badgeSprite,
+      container,
+      deepDispatch,
+    });
+    subagentSpawnCount += 1;
+    syncMirror();
+  }
+
+  function removeSubagentNpc(childSessionId: string, parentCallId: string): void {
+    const view = subagentNpcs.get(childSessionId);
+    if (view) {
+      if (view.container.parent) view.container.parent.removeChild(view.container);
+      view.container.destroy({ children: true });
+      subagentNpcs.delete(childSessionId);
+    }
+    removeSubagentRing(parentCallId);
+    subagentDepths.delete(childSessionId);
+    // Sibling slot counter intentionally NOT decremented — would require tracking
+    // per-parent siblings; new dispatches just take the next slot.
+    syncMirror();
+  }
+
+  function flyFileToArchive(_sessionId: string, _path: string): void {
+    // M3c.2b: counter-only. The actual fly tween from the source NPC to the
+    // archive corner stack is M3c.3 polish. We retain the function signature
+    // so M3c.3 can drop in animation without an event-mapper change. Path
+    // parameter is reserved for M3c.3 (e.g. group glyphs by directory).
+    archiveCount += 1;
+    syncMirror();
+  }
+
+  function attachPermissionSigil(
+    sessionId: string,
+    requestId: string,
+    autoDeny: boolean,
+    toolName: string,
+  ): void {
+    if (sigils.has(requestId)) return; // idempotent on duplicate
+    const view = npcs.get(sessionId);
+    if (!view) return;
+
+    const sprite = Sprite.from(SPRITES.sigilPermission);
+    sprite.anchor.set(0.5, 1);
+    sprite.position.set(SPRITE.npcW / 2 + 10, -SPRITE.npcH);
+    sprite.width = 14;
+    sprite.height = 14;
+    // Auto-deny: the user can't interact with these (server already answered
+    // 'deny' before emitting). Render at lower alpha to communicate readonly.
+    sprite.alpha = autoDeny ? 0.6 : 1.0;
+
+    if (!autoDeny) {
+      // Interactive mode: clicking the sigil focuses the M3b.1 chat permission
+      // card so the user can Allow/Deny/Always. The card is keyed by
+      // data-request-id (Chat.tsx). The Allow button is identified by text
+      // content (case-insensitive "allow"), which is robust to button reorder
+      // and resilient to future markup tweaks. If text matching fails (e.g.
+      // future i18n), the card still scrolls into view.
+      sprite.eventMode = 'static';
+      sprite.cursor = 'pointer';
+      sprite.on('pointertap', () => {
+        // CSS.escape protects against requestId values that contain selector
+        // metacharacters (quotes, brackets, etc.). Protocol declares
+        // requestId as z.string() with no format constraint, so we cannot
+        // assume it's alphanumeric.
+        const card = document.querySelector<HTMLElement>(
+          `[data-request-id="${CSS.escape(requestId)}"]`,
+        );
+        if (!card) return;
+        card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        const buttons = card.querySelectorAll<HTMLButtonElement>('button');
+        const allowBtn = Array.from(buttons).find((b) => /allow/i.test(b.textContent ?? ''));
+        allowBtn?.focus();
+      });
+    }
+
+    view.container.addChild(sprite);
+    sigils.set(requestId, { requestId, sessionId, toolName, autoDeny, sprite });
+    syncMirror();
+  }
+
+  function dismissPermissionSigil(requestId: string): void {
+    const sg = sigils.get(requestId);
+    if (!sg) return;
+    sg.sprite.removeAllListeners();
+    if (sg.sprite.parent) sg.sprite.parent.removeChild(sg.sprite);
+    sg.sprite.destroy();
+    sigils.delete(requestId);
+    syncMirror();
+  }
+
+  function attachSkillParchment(sessionId: string, skillName: string): void {
+    const view = npcs.get(sessionId);
+    if (!view) return;
+    const key = `skill:${sessionId}:${skillName}`;
+    const prior = glyphs.get(key);
+    if (prior) {
+      clearTimeout(prior.timer);
+      if (prior.sprite.parent) prior.sprite.parent.removeChild(prior.sprite);
+      prior.sprite.destroy();
+      glyphs.delete(key);
+    }
+    const sprite = Sprite.from(SPRITES.glyphParchment);
+    sprite.anchor.set(0.5, 1);
+    sprite.position.set(0, -SPRITE.npcH - 32); // above the parchment glyph slot
+    sprite.width = 14;
+    sprite.height = 18;
+    view.container.addChild(sprite);
+    const timer = setTimeout(() => {
+      const gv = glyphs.get(key);
+      if (!gv) return;
+      clearTimeout(gv.timer);
+      if (gv.sprite.parent) gv.sprite.parent.removeChild(gv.sprite);
+      gv.sprite.destroy();
+      glyphs.delete(key);
+      syncMirror();
+    }, 2400);
+    glyphs.set(key, { kind: 'skill', sessionId, content: skillName, sprite, timer });
   }
 
   function applyMutation(m: Mutation): void {
@@ -358,6 +591,32 @@ export function createScene(app: Application): Scene {
         }
         break;
       }
+      case 'summonRing':
+        // Ring keyed by parentCallId so the matching subagent.completed
+        // (which carries the same parentCallId) can clean it up via
+        // removeSubagentNpc. Each handler does one job.
+        spawnSubagentRing(m.parentSessionId, m.parentCallId);
+        break;
+      case 'spawnSubagentNpc':
+        spawnSubagentNpc(m.childSessionId, m.parentSessionId, m.agentType);
+        break;
+      case 'removeSubagentNpc':
+        removeSubagentNpc(m.childSessionId, m.parentCallId);
+        break;
+      case 'fileFly':
+        flyFileToArchive(m.sessionId, m.path);
+        break;
+      case 'permissionSigil':
+        attachPermissionSigil(m.sessionId, m.requestId, m.autoDeny, m.toolName);
+        break;
+      case 'dismissSigil':
+        // Decision (allow/deny/always) is in m.decision; M3c.3 polish renders a
+        // green/red flash before the sigil dismisses. M3c.2b just removes it.
+        dismissPermissionSigil(m.requestId);
+        break;
+      case 'skillParchment':
+        attachSkillParchment(m.sessionId, m.skillName);
+        break;
       default: {
         const _exhaustive: never = m;
         void _exhaustive;
@@ -377,12 +636,36 @@ export function createScene(app: Application): Scene {
     for (const [callId, tv] of toolIcons) {
       toolMirror.set(callId, { name: tv.name, sessionId: tv.sessionId });
     }
+    const subagentMirror = new Map<
+      string,
+      { parentSessionId: string; agentType?: string; deepDispatch?: boolean }
+    >();
+    for (const [id, sv] of subagentNpcs) {
+      subagentMirror.set(id, {
+        parentSessionId: sv.parentSessionId,
+        agentType: sv.agentType,
+        deepDispatch: sv.deepDispatch,
+      });
+    }
+    const sigilMirror = new Map<
+      string,
+      { requestId: string; autoDeny?: boolean; toolName?: string }
+    >();
+    for (const [reqId, sg] of sigils) {
+      sigilMirror.set(reqId, {
+        requestId: sg.requestId,
+        autoDeny: sg.autoDeny,
+        toolName: sg.toolName,
+      });
+    }
     mirrorState({
       npcs: npcSnapshots,
-      subagentNpcs: new Map(),
-      sigils: new Map(),
+      subagentNpcs: subagentMirror,
+      sigils: sigilMirror,
       glyphs: glyphMirror,
       toolIcons: toolMirror,
+      archive: { count: archiveCount },
+      subagentSpawnCount,
     });
   }
 
@@ -428,6 +711,23 @@ export function createScene(app: Application): Scene {
         tv.sprite.destroy();
       }
       toolIcons.clear();
+      for (const sv of subagentNpcs.values()) {
+        if (sv.container.parent) sv.container.parent.removeChild(sv.container);
+        sv.container.destroy({ children: true });
+      }
+      subagentNpcs.clear();
+      for (const ring of subagentRings.values()) {
+        if (ring.parent) ring.parent.removeChild(ring);
+        ring.destroy();
+      }
+      subagentRings.clear();
+      subagentDepths.clear();
+      subagentChildOrder.clear();
+      for (const sg of sigils.values()) {
+        if (sg.sprite.parent) sg.sprite.parent.removeChild(sg.sprite);
+        sg.sprite.destroy();
+      }
+      sigils.clear();
       for (const view of npcs.values()) {
         view.container.destroy({ children: true });
       }

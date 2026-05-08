@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 12 12">
+  <!-- Shield (Smithy copper #7a4f25) -->
+  <polygon points="2,2 10,2 10,8 6,11 2,8" fill="#7a4f25"/>
+  <!-- Hammer head (top-left → bottom-right diagonal) -->
+  <polygon points="3,3 5,3 5,5 3,5" fill="#3a3a40"/>
+  <!-- Hammer handle -->
+  <polygon points="5,5 9,9 8,10 4,6" fill="#1a1410"/>
+  <!-- Tongs (top-right → bottom-left diagonal) -->
+  <polygon points="9,3 7,3 7,5 9,5" fill="#5a5a64"/>
+  <polygon points="7,5 3,9 4,10 8,6" fill="#1a1410"/>
+</svg>

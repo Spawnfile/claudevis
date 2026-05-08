@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 12 12">
+  <!-- Bull body (Headstrong oxblood #8b1f1a) -->
+  <polygon points="1,6 8,6 9,7 9,9 1,9" fill="#8b1f1a"/>
+  <!-- Head/snout charging right -->
+  <polygon points="9,5 11,6 11,8 9,8" fill="#8b1f1a"/>
+  <!-- Horns (stepped polygon) -->
+  <polygon points="9,3 10,4 11,3 11,5 9,5" fill="#1a1410"/>
+  <!-- Legs in motion -->
+  <rect x="2" y="9" width="1" height="3" fill="#8b1f1a"/>
+  <rect x="6" y="9" width="1" height="3" fill="#8b1f1a"/>
+</svg>

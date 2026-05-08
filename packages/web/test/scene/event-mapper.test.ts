@@ -9,7 +9,7 @@ const baseEvent = {
   sessionId: 'session-1',
 };
 
-describe('event-mapper.eventToMutations (M3c.1 + M3c.2a)', () => {
+describe('event-mapper.eventToMutations (M3c.1 + M3c.2a + M3c.2b)', () => {
   it('session.started → spawnNpc mutation', () => {
     const e: Event = {
       ...baseEvent,
@@ -24,11 +24,7 @@ describe('event-mapper.eventToMutations (M3c.1 + M3c.2a)', () => {
   });
 
   it('session.ended → removeNpc mutation', () => {
-    const e: Event = {
-      ...baseEvent,
-      type: 'session.ended',
-      reason: 'user',
-    };
+    const e: Event = { ...baseEvent, type: 'session.ended', reason: 'user' };
     expect(eventToMutations(e)).toEqual([{ kind: 'removeNpc', sessionId: 'session-1' }]);
   });
 
@@ -60,11 +56,7 @@ describe('event-mapper.eventToMutations (M3c.1 + M3c.2a)', () => {
   });
 
   it('user.prompt → glyph parchment mutation (2s) with content', () => {
-    const e: Event = {
-      ...baseEvent,
-      type: 'user.prompt',
-      content: 'hello',
-    };
+    const e: Event = { ...baseEvent, type: 'user.prompt', content: 'hello' };
     expect(eventToMutations(e)).toEqual([
       {
         kind: 'glyph',
@@ -159,7 +151,9 @@ describe('event-mapper.eventToMutations (M3c.1 + M3c.2a)', () => {
     ]);
   });
 
-  it('subagent.dispatched → empty array (M3c.2b fills)', () => {
+  // M3c.2b: 6 new active cases.
+
+  it('subagent.dispatched → TWO mutations (summonRing + spawnSubagentNpc)', () => {
     const e: Event = {
       ...baseEvent,
       type: 'subagent.dispatched',
@@ -168,10 +162,18 @@ describe('event-mapper.eventToMutations (M3c.1 + M3c.2a)', () => {
       prompt: 'plan stuff',
       childSessionId: 'child-1',
     };
-    expect(eventToMutations(e)).toEqual([]);
+    expect(eventToMutations(e)).toEqual([
+      { kind: 'summonRing', parentSessionId: 'session-1', parentCallId: 'call-1' },
+      {
+        kind: 'spawnSubagentNpc',
+        childSessionId: 'child-1',
+        parentSessionId: 'session-1',
+        agentType: 'planner',
+      },
+    ]);
   });
 
-  it('subagent.completed → empty array (M3c.2b fills)', () => {
+  it('subagent.completed → removeSubagentNpc mutation (with parentCallId for ring cleanup)', () => {
     const e: Event = {
       ...baseEvent,
       type: 'subagent.completed',
@@ -180,10 +182,12 @@ describe('event-mapper.eventToMutations (M3c.1 + M3c.2a)', () => {
       result: 'ok',
       status: 'ok',
     };
-    expect(eventToMutations(e)).toEqual([]);
+    expect(eventToMutations(e)).toEqual([
+      { kind: 'removeSubagentNpc', childSessionId: 'child-1', parentCallId: 'call-1' },
+    ]);
   });
 
-  it('file.changed → empty array (M3c.2b fills)', () => {
+  it('file.changed → fileFly mutation with path', () => {
     const e: Event = {
       ...baseEvent,
       type: 'file.changed',
@@ -191,44 +195,71 @@ describe('event-mapper.eventToMutations (M3c.1 + M3c.2a)', () => {
       plus: 0,
       minus: 0,
     };
-    expect(eventToMutations(e)).toEqual([]);
+    expect(eventToMutations(e)).toEqual([
+      { kind: 'fileFly', sessionId: 'session-1', path: '/tmp/x.txt' },
+    ]);
   });
 
-  it('permission.requested → empty array (M3c.2b fills)', () => {
+  it('permission.requested → permissionSigil mutation (interactive — req-fake- prefix)', () => {
     const e: Event = {
       ...baseEvent,
       type: 'permission.requested',
-      requestId: 'req-1',
+      requestId: 'req-fake-1',
       toolName: 'Bash',
       toolInput: {},
     };
-    expect(eventToMutations(e)).toEqual([]);
+    expect(eventToMutations(e)).toEqual([
+      {
+        kind: 'permissionSigil',
+        sessionId: 'session-1',
+        requestId: 'req-fake-1',
+        autoDeny: false,
+        toolName: 'Bash',
+      },
+    ]);
   });
 
-  it('permission.resolved → empty array (M3c.2b fills)', () => {
+  it('permission.requested → permissionSigil mutation (auto-deny — auto-deny- prefix)', () => {
+    const e: Event = {
+      ...baseEvent,
+      type: 'permission.requested',
+      requestId: 'auto-deny-7',
+      toolName: 'Bash',
+      toolInput: {},
+    };
+    expect(eventToMutations(e)).toEqual([
+      {
+        kind: 'permissionSigil',
+        sessionId: 'session-1',
+        requestId: 'auto-deny-7',
+        autoDeny: true,
+        toolName: 'Bash',
+      },
+    ]);
+  });
+
+  it('permission.resolved → dismissSigil mutation', () => {
     const e: Event = {
       ...baseEvent,
       type: 'permission.resolved',
-      requestId: 'req-1',
+      requestId: 'req-fake-1',
       decision: 'allow',
     };
-    expect(eventToMutations(e)).toEqual([]);
+    expect(eventToMutations(e)).toEqual([
+      { kind: 'dismissSigil', requestId: 'req-fake-1', decision: 'allow' },
+    ]);
   });
 
-  it('skill.invoked → empty array (M3c.2b fills)', () => {
-    const e: Event = {
-      ...baseEvent,
-      type: 'skill.invoked',
-      skillName: 'foo',
-    };
-    expect(eventToMutations(e)).toEqual([]);
+  it('skill.invoked → skillParchment mutation with skillName', () => {
+    const e: Event = { ...baseEvent, type: 'skill.invoked', skillName: 'foo' };
+    expect(eventToMutations(e)).toEqual([
+      { kind: 'skillParchment', sessionId: 'session-1', skillName: 'foo' },
+    ]);
   });
 
+  // Remaining M3c.3 deferral.
   it('interrupt.signaled → empty array (M3c.3 fills)', () => {
-    const e: Event = {
-      ...baseEvent,
-      type: 'interrupt.signaled',
-    };
+    const e: Event = { ...baseEvent, type: 'interrupt.signaled' };
     expect(eventToMutations(e)).toEqual([]);
   });
 });

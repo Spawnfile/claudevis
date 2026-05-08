@@ -21,11 +21,25 @@ export interface MirrorInput {
   >;
   subagentNpcs: Map<
     string,
-    { childSessionId?: string; parentSessionId: string; agentType?: string }
+    {
+      childSessionId?: string;
+      parentSessionId: string;
+      agentType?: string;
+      deepDispatch?: boolean;
+    }
   >;
-  sigils: Map<string, { autoDeny?: boolean; requestId: string }>;
+  sigils: Map<string, { autoDeny?: boolean; requestId: string; toolName?: string }>;
   glyphs: Map<string, { kind: string; sessionId: string; content?: string }>;
   toolIcons: Map<string, { name: string; sessionId: string }>;
+  archive?: { count: number };
+  /**
+   * Cumulative count of subagent NPCs that have been spawned in this scene's
+   * lifetime. Increments on every spawnSubagentNpc and NEVER decrements. The
+   * timing-robust e2e signal: even if the dispatched/completed events arrive
+   * close enough together that the in-flight subagent is never visible in the
+   * mirror, the spawn-count survives and e2e can assert it incremented.
+   */
+  subagentSpawnCount?: number;
 }
 
 export function mirrorState(s: MirrorInput): void {
@@ -46,6 +60,7 @@ export function mirrorState(s: MirrorInput): void {
     d.setAttribute('data-scene-subagent-id', id);
     d.setAttribute('data-scene-subagent-parent', child.parentSessionId);
     if (child.agentType) d.setAttribute('data-scene-subagent-agent-type', child.agentType);
+    if (child.deepDispatch) d.setAttribute('data-scene-subagent-deep', 'true');
     el.appendChild(d);
   }
 
@@ -53,6 +68,7 @@ export function mirrorState(s: MirrorInput): void {
     const d = document.createElement('div');
     d.setAttribute('data-scene-sigil-request-id', reqId);
     d.setAttribute('data-scene-sigil-mode', sigil.autoDeny ? 'auto-deny' : 'interactive');
+    if (sigil.toolName) d.setAttribute('data-scene-sigil-tool-name', sigil.toolName);
     el.appendChild(d);
   }
 
@@ -70,6 +86,18 @@ export function mirrorState(s: MirrorInput): void {
     d.setAttribute('data-scene-tool-call-id', callId);
     d.setAttribute('data-scene-tool-name', tool.name);
     d.setAttribute('data-scene-tool-session', tool.sessionId);
+    el.appendChild(d);
+  }
+
+  if (s.archive && s.archive.count > 0) {
+    const d = document.createElement('div');
+    d.setAttribute('data-scene-archive-count', String(s.archive.count));
+    el.appendChild(d);
+  }
+
+  if (s.subagentSpawnCount !== undefined && s.subagentSpawnCount > 0) {
+    const d = document.createElement('div');
+    d.setAttribute('data-scene-subagent-spawn-count', String(s.subagentSpawnCount));
     el.appendChild(d);
   }
 }

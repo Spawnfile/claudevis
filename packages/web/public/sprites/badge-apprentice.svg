@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 12 12">
+  <!-- Shield (Apprentice tan #a89878) -->
+  <polygon points="2,2 10,2 10,8 6,11 2,8" fill="#a89878"/>
+  <!-- Wax tablet body (parchment) -->
+  <rect x="3" y="3" width="6" height="5" fill="#efe1c0"/>
+  <!-- Check mark stroke 1 (descending) -->
+  <polygon points="4,5 5,5 6,6 5,7" fill="#3d6b3d"/>
+  <!-- Check mark stroke 2 (ascending) -->
+  <polygon points="6,6 7,4 8,4 7,7" fill="#3d6b3d"/>
+</svg>

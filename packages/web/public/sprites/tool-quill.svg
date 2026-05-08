@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 12 12">
+  <!-- Feather body (Quill ink-dark #1a1410) — diagonal polygon -->
+  <polygon points="2,9 4,11 9,4 7,2" fill="#1a1410"/>
+  <!-- Feather barbs (lighter accent stepping up the spine) -->
+  <polygon points="3,8 4,8 5,7 4,6" fill="#3a2e22"/>
+  <polygon points="5,6 6,6 7,5 6,4" fill="#3a2e22"/>
+  <!-- Nib tip (torch glint) -->
+  <rect x="2" y="9" width="1" height="1" fill="#e8a541"/>
+  <!-- Inkpot at bottom-left -->
+  <rect x="0" y="10" width="3" height="2" fill="#5a4f8a"/>
+</svg>

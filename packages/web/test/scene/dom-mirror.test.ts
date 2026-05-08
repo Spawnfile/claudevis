@@ -5,6 +5,8 @@ import { type MirrorInput, mirrorState } from '../../src/scene/dom-mirror';
 type NpcEntry = MirrorInput['npcs'] extends Map<string, infer V> ? V : never;
 type GlyphEntry = MirrorInput['glyphs'] extends Map<string, infer V> ? V : never;
 type ToolEntry = MirrorInput['toolIcons'] extends Map<string, infer V> ? V : never;
+type SubagentEntry = MirrorInput['subagentNpcs'] extends Map<string, infer V> ? V : never;
+type SigilEntry = MirrorInput['sigils'] extends Map<string, infer V> ? V : never;
 
 const emptyInput = (): MirrorInput => ({
   npcs: new Map(),
@@ -98,5 +100,72 @@ describe('dom-mirror.mirrorState', () => {
     expect(els[0]!.getAttribute('data-scene-tool-session')).toBe('session-1');
     expect(els[1]!.getAttribute('data-scene-tool-call-id')).toBe('call-2');
     expect(els[1]!.getAttribute('data-scene-tool-name')).toBe('Read');
+  });
+
+  // M3c.2b additions.
+
+  it('writes data-scene-subagent-id, parent, and agent-type for child NPCs', () => {
+    const subagentNpcs = new Map<string, SubagentEntry>([
+      ['child-1', { parentSessionId: 'session-1', agentType: 'planner' }],
+    ]);
+    mirrorState({ ...emptyInput(), subagentNpcs });
+    const el = document.querySelector('[data-scene-subagent-id="child-1"]');
+    expect(el).not.toBeNull();
+    expect(el?.getAttribute('data-scene-subagent-parent')).toBe('session-1');
+    expect(el?.getAttribute('data-scene-subagent-agent-type')).toBe('planner');
+    expect(el?.getAttribute('data-scene-subagent-deep')).toBeNull();
+  });
+
+  it('writes data-scene-subagent-deep="true" when the entry is a deep-dispatch placeholder', () => {
+    const subagentNpcs = new Map<string, SubagentEntry>([
+      ['deep-1', { parentSessionId: 'session-1', deepDispatch: true }],
+    ]);
+    mirrorState({ ...emptyInput(), subagentNpcs });
+    const el = document.querySelector('[data-scene-subagent-id="deep-1"]');
+    expect(el).not.toBeNull();
+    expect(el?.getAttribute('data-scene-subagent-deep')).toBe('true');
+  });
+
+  it('writes data-scene-sigil-mode and tool-name for permission sigils', () => {
+    const sigils = new Map<string, SigilEntry>([
+      ['req-fake-1', { requestId: 'req-fake-1', autoDeny: false, toolName: 'Bash' }],
+      ['auto-deny-7', { requestId: 'auto-deny-7', autoDeny: true, toolName: 'Write' }],
+    ]);
+    mirrorState({ ...emptyInput(), sigils });
+    const interactive = document.querySelector('[data-scene-sigil-request-id="req-fake-1"]');
+    expect(interactive).not.toBeNull();
+    expect(interactive?.getAttribute('data-scene-sigil-mode')).toBe('interactive');
+    expect(interactive?.getAttribute('data-scene-sigil-tool-name')).toBe('Bash');
+    const auto = document.querySelector('[data-scene-sigil-request-id="auto-deny-7"]');
+    expect(auto).not.toBeNull();
+    expect(auto?.getAttribute('data-scene-sigil-mode')).toBe('auto-deny');
+    expect(auto?.getAttribute('data-scene-sigil-tool-name')).toBe('Write');
+  });
+
+  it('writes data-scene-archive-count when archive is provided', () => {
+    mirrorState({ ...emptyInput(), archive: { count: 3 } });
+    const el = document.querySelector('[data-scene-archive-count]');
+    expect(el).not.toBeNull();
+    expect(el?.getAttribute('data-scene-archive-count')).toBe('3');
+  });
+
+  it('omits archive entry entirely when count is 0', () => {
+    mirrorState({ ...emptyInput(), archive: { count: 0 } });
+    const el = document.querySelector('[data-scene-archive-count]');
+    expect(el).toBeNull();
+  });
+
+  it('writes data-scene-subagent-spawn-count when provided and > 0', () => {
+    mirrorState({ ...emptyInput(), subagentSpawnCount: 2 });
+    const el = document.querySelector('[data-scene-subagent-spawn-count]');
+    expect(el).not.toBeNull();
+    expect(el?.getAttribute('data-scene-subagent-spawn-count')).toBe('2');
+  });
+
+  it('omits subagent-spawn-count entry when 0 or undefined', () => {
+    mirrorState({ ...emptyInput(), subagentSpawnCount: 0 });
+    expect(document.querySelector('[data-scene-subagent-spawn-count]')).toBeNull();
+    mirrorState(emptyInput());
+    expect(document.querySelector('[data-scene-subagent-spawn-count]')).toBeNull();
   });
 });

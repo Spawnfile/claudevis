@@ -1,8 +1,10 @@
 // packages/web/src/scene/types.ts
 // Mutation discriminated union — output of event-mapper, input of scene's apply step.
 // M3c.1 covered spawnNpc / removeNpc / updateStamina / errorFlash.
-// M3c.2a adds glyph / thoughtCloud / speechBubble / attachTool / retractTool.
-// M3c.2b/3 extend further (subagent ring, fileFly, permission sigil, skill parchment, shake).
+// M3c.2a added glyph / thoughtCloud / speechBubble / attachTool / retractTool.
+// M3c.2b adds summonRing / spawnSubagentNpc / removeSubagentNpc / fileFly /
+//   permissionSigil / dismissSigil / skillParchment.
+// M3c.3 will add shake (interrupt.signaled) and animation-polish variants.
 
 export type Mutation =
   | { kind: 'spawnNpc'; sessionId: string; model: string; name: string }
@@ -19,7 +21,25 @@ export type Mutation =
   | { kind: 'thoughtCloud'; sessionId: string; content: string }
   | { kind: 'speechBubble'; sessionId: string; content: string; durationMs: number }
   | { kind: 'attachTool'; sessionId: string; callId: string; name: string }
-  | { kind: 'retractTool'; sessionId: string; callId: string; status: 'ok' | 'error' };
+  | { kind: 'retractTool'; sessionId: string; callId: string; status: 'ok' | 'error' }
+  | { kind: 'summonRing'; parentSessionId: string; parentCallId: string }
+  | {
+      kind: 'spawnSubagentNpc';
+      childSessionId: string;
+      parentSessionId: string;
+      agentType: string;
+    }
+  | { kind: 'removeSubagentNpc'; childSessionId: string; parentCallId: string }
+  | { kind: 'fileFly'; sessionId: string; path: string }
+  | {
+      kind: 'permissionSigil';
+      sessionId: string;
+      requestId: string;
+      autoDeny: boolean;
+      toolName: string;
+    }
+  | { kind: 'dismissSigil'; requestId: string; decision: 'allow' | 'always' | 'deny' }
+  | { kind: 'skillParchment'; sessionId: string; skillName: string };
 
 // Scene's internal index — what the event-mapper can read about current state.
 // M3c.1 only needs npcs; M3c.2a/b extend if event-mapper needs scene state lookups.

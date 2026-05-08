@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 12 12">
+  <!-- Shield (Architect royal blue #2d5a8b) -->
+  <polygon points="2,2 10,2 10,8 6,11 2,8" fill="#2d5a8b"/>
+  <!-- Compass legs (parchment) — V-shape -->
+  <polygon points="6,3 7,7 5,7" fill="#efe1c0"/>
+  <!-- Square arm -->
+  <rect x="4" y="6" width="4" height="1" fill="#efe1c0"/>
+  <!-- Pivot rivet -->
+  <rect x="5" y="3" width="2" height="1" fill="#e8a541"/>
+</svg>

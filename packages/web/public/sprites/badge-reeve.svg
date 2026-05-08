@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 12 12">
+  <!-- Shield (Reeve slate #3a3a4a) -->
+  <polygon points="2,2 10,2 10,8 6,11 2,8" fill="#3a3a4a"/>
+  <!-- Eye outline (parchment lid, hexagonal polygon) -->
+  <polygon points="3,5 5,4 7,4 9,5 7,7 5,7" fill="#efe1c0"/>
+  <!-- Iris (torch) -->
+  <rect x="5" y="5" width="2" height="2" fill="#e8a541"/>
+  <!-- Pupil -->
+  <rect x="5" y="5" width="1" height="1" fill="#1a1410"/>
+</svg>

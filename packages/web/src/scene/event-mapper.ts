@@ -1,9 +1,15 @@
 // packages/web/src/scene/event-mapper.ts
 // Pure function: Event → Mutation[]. Exhaustive over Event['type']; TypeScript
-// proves coverage via the `_exhaustive: never` arm. Sub-milestones M3c.2b/M3c.3
-// extend the mutation list per case; M3c.1 active cases are session.started/
-// session.ended/tokens.updated/error. M3c.2a adds user.prompt / agent.thinking /
-// agent.message / tool.started / tool.completed.
+// proves coverage via the `_exhaustive: never` arm. M3c.1 active cases are
+// session.started/session.ended/tokens.updated/error. M3c.2a added user.prompt /
+// agent.thinking / agent.message / tool.started / tool.completed. M3c.2b adds
+// the remaining 6: subagent.dispatched / subagent.completed / file.changed /
+// permission.requested / permission.resolved / skill.invoked.
+//
+// Permission auto-deny synthesis (M3b.1): the server emits permission.requested
+// with `requestId: 'auto-deny-<N>'` for events synthesized from the upstream
+// CLI's `result.permission_denials[]` array — those are read-only sigils. Real
+// interactive requests use the `req-fake-<N>` (or future real-mode) prefix.
 
 import type { Event } from '@claudevis/shared';
 import type { Mutation } from './types';
@@ -16,7 +22,6 @@ export function eventToMutations(e: Event): Mutation[] {
       return [{ kind: 'spawnNpc', sessionId: e.sessionId, model: e.model, name: e.name }];
     case 'session.ended':
       return [{ kind: 'removeNpc', sessionId: e.sessionId }];
-    // M3c.2a fills these:
     case 'user.prompt':
       return [
         {
@@ -43,6 +48,45 @@ export function eventToMutations(e: Event): Mutation[] {
       return [{ kind: 'attachTool', sessionId: e.sessionId, callId: e.callId, name: e.name }];
     case 'tool.completed':
       return [{ kind: 'retractTool', sessionId: e.sessionId, callId: e.callId, status: e.status }];
+    // M3c.2b fills these:
+    case 'subagent.dispatched':
+      // Two mutations per design §4.4.3: ring around parent + child NPC spawn.
+      // The ring is keyed by parentCallId in scene.ts so the matching
+      // subagent.completed (which carries the same parentCallId) can clean it up.
+      return [
+        { kind: 'summonRing', parentSessionId: e.sessionId, parentCallId: e.parentCallId },
+        {
+          kind: 'spawnSubagentNpc',
+          childSessionId: e.childSessionId,
+          parentSessionId: e.sessionId,
+          agentType: e.agentType,
+        },
+      ];
+    case 'subagent.completed':
+      return [
+        {
+          kind: 'removeSubagentNpc',
+          childSessionId: e.childSessionId,
+          parentCallId: e.parentCallId,
+        },
+      ];
+    case 'file.changed':
+      // path-only mutation; M4 may add diff math (+/-) for richer rendering.
+      return [{ kind: 'fileFly', sessionId: e.sessionId, path: e.path }];
+    case 'permission.requested':
+      return [
+        {
+          kind: 'permissionSigil',
+          sessionId: e.sessionId,
+          requestId: e.requestId,
+          autoDeny: e.requestId.startsWith('auto-deny-'),
+          toolName: e.toolName,
+        },
+      ];
+    case 'permission.resolved':
+      return [{ kind: 'dismissSigil', requestId: e.requestId, decision: e.decision }];
+    case 'skill.invoked':
+      return [{ kind: 'skillParchment', sessionId: e.sessionId, skillName: e.skillName }];
     // M3c.1 already wired:
     case 'session.idle':
     case 'session.mode.changed':
@@ -53,14 +97,6 @@ export function eventToMutations(e: Event): Mutation[] {
       ];
     case 'error':
       return [{ kind: 'errorFlash', message: e.message, sessionId: e.sessionId }];
-    // M3c.2b fills these:
-    case 'subagent.dispatched':
-    case 'subagent.completed':
-    case 'file.changed':
-    case 'permission.requested':
-    case 'permission.resolved':
-    case 'skill.invoked':
-      return [];
     // M3c.3 fills this:
     case 'interrupt.signaled':
       return [];
