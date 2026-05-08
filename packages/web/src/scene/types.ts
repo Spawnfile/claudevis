@@ -4,13 +4,15 @@
 // M3c.2a added glyph / thoughtCloud / speechBubble / attachTool / retractTool.
 // M3c.2b adds summonRing / spawnSubagentNpc / removeSubagentNpc / fileFly /
 //   permissionSigil / dismissSigil / skillParchment.
-// M3c.3 will add shake (interrupt.signaled) and animation-polish variants.
+// M3c.3 adds shake (interrupt.signaled) and extends errorFlash with `recoverable`
+// so the scene handler can choose between NPC-localized flash (recoverable=true)
+// and scene-wide ember flash (recoverable=false) per design §4.5.
 
 export type Mutation =
   | { kind: 'spawnNpc'; sessionId: string; model: string; name: string }
   | { kind: 'removeNpc'; sessionId: string }
   | { kind: 'updateStamina'; sessionId: string; costUsd: number; model: string }
-  | { kind: 'errorFlash'; message: string; sessionId?: string }
+  | { kind: 'errorFlash'; message: string; sessionId?: string; recoverable: boolean }
   | {
       kind: 'glyph';
       sessionId: string;
@@ -39,7 +41,8 @@ export type Mutation =
       toolName: string;
     }
   | { kind: 'dismissSigil'; requestId: string; decision: 'allow' | 'always' | 'deny' }
-  | { kind: 'skillParchment'; sessionId: string; skillName: string };
+  | { kind: 'skillParchment'; sessionId: string; skillName: string }
+  | { kind: 'shake'; sessionId: string };
 
 // Scene's internal index — what the event-mapper can read about current state.
 // M3c.1 only needs npcs; M3c.2a/b extend if event-mapper needs scene state lookups.

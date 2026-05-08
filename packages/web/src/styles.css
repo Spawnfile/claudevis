@@ -745,3 +745,21 @@ body.focus-mode .scene-panel {
 .scene-canvas-host.dragging {
   cursor: grabbing;
 }
+
+/* OBS broadcast prep — M3c.3 ships CSS only; M4 adds the topbar toggle.
+ * Different from .focus-mode: broadcast lifts scene-panel into a fixed
+ * full-viewport overlay with z-index above all chrome, suitable for
+ * window-capture in OBS Studio. */
+body.broadcast .left,
+body.broadcast .bottom,
+body.broadcast .chat-area {
+  display: none !important;
+}
+body.broadcast .app {
+  display: block;
+}
+body.broadcast .scene-panel {
+  position: fixed;
+  inset: 0;
+  z-index: 999;
+}

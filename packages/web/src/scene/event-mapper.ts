@@ -96,10 +96,16 @@ export function eventToMutations(e: Event): Mutation[] {
         { kind: 'updateStamina', sessionId: e.sessionId, costUsd: e.costUsd, model: e.model },
       ];
     case 'error':
-      return [{ kind: 'errorFlash', message: e.message, sessionId: e.sessionId }];
-    // M3c.3 fills this:
+      return [
+        {
+          kind: 'errorFlash',
+          message: e.message,
+          sessionId: e.sessionId,
+          recoverable: e.recoverable,
+        },
+      ];
     case 'interrupt.signaled':
-      return [];
+      return [{ kind: 'shake', sessionId: e.sessionId }];
     default: {
       const _exhaustive: never = e;
       void _exhaustive;

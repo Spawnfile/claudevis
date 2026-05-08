@@ -43,7 +43,7 @@ describe('event-mapper.eventToMutations (M3c.1 + M3c.2a + M3c.2b)', () => {
     ]);
   });
 
-  it('error → errorFlash mutation', () => {
+  it('error → errorFlash mutation (recoverable: false)', () => {
     const e: Event = {
       ...baseEvent,
       type: 'error',
@@ -51,7 +51,29 @@ describe('event-mapper.eventToMutations (M3c.1 + M3c.2a + M3c.2b)', () => {
       recoverable: false,
     };
     expect(eventToMutations(e)).toEqual([
-      { kind: 'errorFlash', message: 'something went wrong', sessionId: 'session-1' },
+      {
+        kind: 'errorFlash',
+        message: 'something went wrong',
+        sessionId: 'session-1',
+        recoverable: false,
+      },
+    ]);
+  });
+
+  it('error → errorFlash mutation (recoverable: true)', () => {
+    const e: Event = {
+      ...baseEvent,
+      type: 'error',
+      message: 'transient hiccup',
+      recoverable: true,
+    };
+    expect(eventToMutations(e)).toEqual([
+      {
+        kind: 'errorFlash',
+        message: 'transient hiccup',
+        sessionId: 'session-1',
+        recoverable: true,
+      },
     ]);
   });
 
@@ -257,9 +279,9 @@ describe('event-mapper.eventToMutations (M3c.1 + M3c.2a + M3c.2b)', () => {
     ]);
   });
 
-  // Remaining M3c.3 deferral.
-  it('interrupt.signaled → empty array (M3c.3 fills)', () => {
+  // M3c.3: the last case fills.
+  it('interrupt.signaled → shake mutation', () => {
     const e: Event = { ...baseEvent, type: 'interrupt.signaled' };
-    expect(eventToMutations(e)).toEqual([]);
+    expect(eventToMutations(e)).toEqual([{ kind: 'shake', sessionId: 'session-1' }]);
   });
 });

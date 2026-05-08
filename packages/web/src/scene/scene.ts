@@ -1,10 +1,11 @@
 import type { Event } from '@claudevis/shared';
 // packages/web/src/scene/scene.ts
-import { type Application, Container, Graphics, Sprite, Texture } from 'pixi.js';
+import { type Application, Container, Graphics, Sprite, Texture, Ticker } from 'pixi.js';
+import { ANIM, animator, easeOutQuad } from './animator';
 import { mirrorState } from './dom-mirror';
 import { eventToMutations } from './event-mapper';
 import { npcLayoutSlot, tileToScreen } from './grid';
-import { MODEL_COLORS, STAMINA_GLYPH } from './lore-colors';
+import { MODEL_COLORS, MODE_COLORS, STAMINA_GLYPH } from './lore-colors';
 import { AGENT_SPRITE_KEY, SPRITES, type SpriteName, TOOL_SPRITE_KEY } from './sprite-manifest';
 import { costToSegments } from './stamina';
 import { PALETTE, SPRITE, TILE } from './theme';
@@ -68,7 +69,10 @@ export interface Scene {
 
 const THOUGHT_RECENCY_MS = 3000;
 
-function createVillageBackdrop(tileLayer: Container, spriteLayer: Container): void {
+function createVillageBackdrop(
+  tileLayer: Container,
+  spriteLayer: Container,
+): { lanterns: Sprite[] } {
   // 5×5 grass tile grid, col/row in -2..2 (25 tiles total). Each tile is a
   // separate Sprite for clean z-sort (later tiles render on top of earlier).
   for (let row = -2; row <= 2; row++) {
@@ -109,6 +113,7 @@ function createVillageBackdrop(tileLayer: Container, spriteLayer: Container): vo
     { col: -2, row: 2 },
     { col: 2, row: 2 },
   ];
+  const lanterns: Sprite[] = [];
   for (const slot of lanternSlots) {
     const lantern = Sprite.from(SPRITES.lanternPost);
     lantern.anchor.set(0.5, 1);
@@ -118,6 +123,7 @@ function createVillageBackdrop(tileLayer: Container, spriteLayer: Container): vo
     lantern.position.set(pos.x, pos.y + TILE.h / 2);
     lantern.zIndex = (slot.col + slot.row) * 10 + 2;
     spriteLayer.addChild(lantern);
+    lanterns.push(lantern);
   }
 
   const well = Sprite.from(SPRITES.well);
@@ -128,6 +134,8 @@ function createVillageBackdrop(tileLayer: Container, spriteLayer: Container): vo
   well.position.set(wellPos.x, wellPos.y + TILE.h / 2);
   well.zIndex = 3 * 10 + 3;
   spriteLayer.addChild(well);
+
+  return { lanterns };
 }
 
 export function createScene(app: Application): Scene {
@@ -148,7 +156,7 @@ export function createScene(app: Application): Scene {
   const defaultRootY = app.screen.height / 2 - 30;
   root.position.set(defaultRootX, defaultRootY);
 
-  createVillageBackdrop(tileLayer, spriteLayer);
+  const { lanterns: lanternSprites } = createVillageBackdrop(tileLayer, spriteLayer);
 
   const npcs = new Map<string, NpcView>();
   // M3c.2a: glyphs keyed by `${kind}:${sessionId}`; toolIcons keyed by callId.
@@ -163,8 +171,24 @@ export function createScene(app: Application): Scene {
   const sigils = new Map<string, SigilView>(); // requestId → SigilView
   let archiveCount = 0;
   let subagentSpawnCount = 0; // cumulative spawn counter; never decrements (timing-robust e2e signal)
+  // M3c.3 ambient: per-NPC ticker callbacks for idle bob. Keyed by sessionId so
+  // removeNpc can stop the ticker before destroying the container.
+  const idleBobTickers = new Map<string, (ticker: Ticker) => void>();
+  // M3c.3 ring rotation tickers — keyed by parentCallId, paired with subagentRings.
+  const ringTickers = new Map<string, (ticker: Ticker) => void>();
+  // M3c.3 sigil pulse tickers — keyed by requestId, paired with sigils.
+  const sigilTickers = new Map<string, (ticker: Ticker) => void>();
+  // M3c.3 ambient tickers (lantern flicker + ember-particle spawn) — held in
+  // a single array since they don't need keyed access; cleared in destroy().
+  const ambientTickers: Array<(ticker: Ticker) => void> = [];
+  const ambientIntervals: ReturnType<typeof setInterval>[] = [];
+  // Active ember particles (for cleanup on scene destroy).
+  const emberParticles = new Set<Sprite>();
   let activeSessionId: string | null = null;
   void activeSessionId;
+
+  startLanternFlicker();
+  startEmberSpawner();
 
   function modelTint(model: string): number {
     return MODEL_COLORS[model as keyof typeof MODEL_COLORS] ?? 0xffffff;
@@ -235,9 +259,14 @@ export function createScene(app: Application): Scene {
       staminaSegments,
     });
     subagentDepths.set(sessionId, 0);
+
+    container.alpha = 0;
+    animator.tween(container as unknown as Record<string, number>, 'alpha', 0, 1, ANIM.fadeIn);
+    startIdleBob(sessionId);
   }
 
   function removeNpc(sessionId: string): void {
+    stopIdleBob(sessionId);
     // Clear any glyphs / tool icons attached to this NPC before destroying.
     for (const [key, gv] of glyphs) {
       if (gv.sessionId === sessionId) clearGlyphByKey(key);
@@ -248,12 +277,54 @@ export function createScene(app: Application): Scene {
 
     const view = npcs.get(sessionId);
     if (!view) return;
-    spriteLayer.removeChild(view.container);
-    view.container.destroy({ children: true });
+    // Detach from npcs map immediately so a new spawn for the same id wouldn't
+    // conflict with the in-flight fade-out. The container stays in the scene
+    // graph until the tween completes.
+    npcs.delete(sessionId);
     subagentDepths.delete(sessionId);
     subagentChildOrder.delete(sessionId);
-    npcs.delete(sessionId);
+    const container = view.container;
+    animator.tween(
+      container as unknown as Record<string, number>,
+      'alpha',
+      container.alpha,
+      0,
+      ANIM.fadeOut,
+      {
+        onDone: () => {
+          if (container.parent) container.parent.removeChild(container);
+          container.destroy({ children: true });
+        },
+      },
+    );
     syncMirror();
+  }
+
+  function startIdleBob(sessionId: string): void {
+    const view = npcs.get(sessionId);
+    if (!view) return;
+    if (idleBobTickers.has(sessionId)) return; // idempotent
+    const restY = view.npcSprite.position.y;
+    const startMs = performance.now();
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const cb = (_ticker: Ticker) => {
+      if (document.body.classList.contains('reduced-motion')) {
+        view.npcSprite.position.y = restY;
+        return;
+      }
+      const t = ((performance.now() - startMs) % ANIM.npcIdleBob) / ANIM.npcIdleBob;
+      // Sine-wave bob: 2px amplitude.
+      view.npcSprite.position.y = restY - 2 * Math.sin(t * Math.PI * 2);
+    };
+    Ticker.shared.add(cb);
+    idleBobTickers.set(sessionId, cb);
+  }
+
+  function stopIdleBob(sessionId: string): void {
+    const cb = idleBobTickers.get(sessionId);
+    if (!cb) return;
+    Ticker.shared.remove(cb);
+    idleBobTickers.delete(sessionId);
   }
 
   function updateStamina(sessionId: string, costUsd: number, _model: string): void {
@@ -267,11 +338,54 @@ export function createScene(app: Application): Scene {
     }
   }
 
-  function errorFlash(_message: string, sessionId?: string): void {
+  function errorFlash(_message: string, sessionId: string | undefined, recoverable: boolean): void {
+    // Scene-wide ember flash for unrecoverable errors (per design §4.5). The
+    // village root tints toward ember briefly then back. Localized NPC flash
+    // also runs if sessionId is set, so the user gets both signals.
+    if (!recoverable) {
+      animator.tween(
+        root as unknown as Record<string, number>,
+        'alpha',
+        1,
+        0.6,
+        ANIM.errorFlash / 2,
+        {
+          onDone: () => {
+            animator.tween(
+              root as unknown as Record<string, number>,
+              'alpha',
+              0.6,
+              1,
+              ANIM.errorFlash / 2,
+            );
+          },
+        },
+      );
+    }
+
     if (!sessionId) return;
     const view = npcs.get(sessionId);
     if (!view) return;
     view.snapshot.state = 'errored';
+    // NPC body alpha flash 1 → 0.4 → 1 to localize the error to a session.
+    animator.tween(
+      view.body as unknown as Record<string, number>,
+      'alpha',
+      1,
+      0.4,
+      ANIM.errorFlash / 2,
+      {
+        onDone: () => {
+          animator.tween(
+            view.body as unknown as Record<string, number>,
+            'alpha',
+            0.4,
+            1,
+            ANIM.errorFlash / 2,
+          );
+        },
+      },
+    );
   }
 
   function clearGlyphByKey(key: string): void {
@@ -327,6 +441,17 @@ export function createScene(app: Application): Scene {
     }
     view.container.addChild(sprite);
 
+    // Float upward by 4px over the float duration. Animator short-circuits
+    // when reduced-motion is on. Independent of the fade-timeout below.
+    animator.tween(
+      sprite.position as unknown as Record<string, number>,
+      'y',
+      yOffset,
+      yOffset - 4,
+      ANIM.glyphFloat,
+      { ease: easeOutQuad },
+    );
+
     const timer = setTimeout(() => clearGlyphByKey(key), durationMs);
     glyphs.set(key, { kind, sessionId, content, sprite, timer });
   }
@@ -338,19 +463,55 @@ export function createScene(app: Application): Scene {
     const spriteKey = (TOOL_SPRITE_KEY[name] ?? 'toolGeneric') as SpriteName;
     const sprite = Sprite.from(SPRITES[spriteKey]);
     sprite.anchor.set(0, 1);
-    sprite.position.set(SPRITE.npcW / 2 + 2, TILE.h / 2 - 4);
+    const restX = SPRITE.npcW / 2 + 2;
+    const restY = TILE.h / 2 - 4;
+    // Slide-in: start tucked behind the NPC body, slide right to rest.
+    sprite.position.set(restX - 6, restY);
+    sprite.alpha = 0;
     sprite.width = 12;
     sprite.height = 12;
     view.container.addChild(sprite);
+    animator.tween(
+      sprite.position as unknown as Record<string, number>,
+      'x',
+      restX - 6,
+      restX,
+      ANIM.fadeIn,
+      { ease: easeOutQuad },
+    );
+    animator.tween(sprite as unknown as Record<string, number>, 'alpha', 0, 1, ANIM.fadeIn);
     toolIcons.set(callId, { callId, sessionId, name, sprite });
   }
 
   function retractToolIcon(callId: string): void {
     const tv = toolIcons.get(callId);
     if (!tv) return;
-    if (tv.sprite.parent) tv.sprite.parent.removeChild(tv.sprite);
-    tv.sprite.destroy();
+    // Detach from map immediately so a new attach for the same callId would
+    // not collide with this fading sprite. The sprite stays in the scene graph
+    // until the fade-out completes.
     toolIcons.delete(callId);
+    const sprite = tv.sprite;
+    const startX = sprite.position.x;
+    animator.tween(
+      sprite.position as unknown as Record<string, number>,
+      'x',
+      startX,
+      startX - 6,
+      ANIM.fadeOut,
+    );
+    animator.tween(
+      sprite as unknown as Record<string, number>,
+      'alpha',
+      sprite.alpha,
+      0,
+      ANIM.fadeOut,
+      {
+        onDone: () => {
+          if (sprite.parent) sprite.parent.removeChild(sprite);
+          sprite.destroy();
+        },
+      },
+    );
   }
 
   function spawnSubagentRing(parentSessionId: string, parentCallId: string): void {
@@ -362,15 +523,50 @@ export function createScene(app: Application): Scene {
     ring.position.set(0, TILE.h / 2);
     // Iso-correct flat ellipse: 64×32 follows the village's 2:1 iso projection.
     // A 64×64 ring would look like a screen-space circle and break the
-    // moonlit-village visual grammar.
-    ring.width = TILE.w;
-    ring.height = TILE.h;
+    // moonlit-village visual grammar. Width/height start at 0 and tween up.
     ring.zIndex = -1; // behind the NPC body
     parent.container.addChildAt(ring, 0);
     subagentRings.set(parentCallId, ring);
+
+    // "Summon" gesture: scale-in from 0 to full size over ANIM.summonRing.
+    // Width and height tween in lockstep — the iso-flat aspect ratio (64×32)
+    // is preserved throughout. easeOutQuad gives a slight overshoot feel.
+    ring.width = 0;
+    ring.height = 0;
+    animator.tween(ring as unknown as Record<string, number>, 'width', 0, TILE.w, ANIM.summonRing, {
+      ease: easeOutQuad,
+    });
+    animator.tween(
+      ring as unknown as Record<string, number>,
+      'height',
+      0,
+      TILE.h,
+      ANIM.summonRing,
+      { ease: easeOutQuad },
+    );
+
+    // Slow continuous rotation while the subagent is in-flight (signals
+    // "agent at work"). Persists until removeSubagentRing.
+    const startMs = performance.now();
+    const rotationPeriodMs = 2400;
+    const cb = (_ticker: Ticker) => {
+      if (document.body.classList.contains('reduced-motion')) {
+        ring.rotation = 0;
+        return;
+      }
+      const t = ((performance.now() - startMs) % rotationPeriodMs) / rotationPeriodMs;
+      ring.rotation = t * Math.PI * 2;
+    };
+    Ticker.shared.add(cb);
+    ringTickers.set(parentCallId, cb);
   }
 
   function removeSubagentRing(parentCallId: string): void {
+    const cb = ringTickers.get(parentCallId);
+    if (cb) {
+      Ticker.shared.remove(cb);
+      ringTickers.delete(parentCallId);
+    }
     const ring = subagentRings.get(parentCallId);
     if (!ring) return;
     if (ring.parent) ring.parent.removeChild(ring);
@@ -432,6 +628,9 @@ export function createScene(app: Application): Scene {
 
     spriteLayer.addChild(container);
 
+    container.alpha = 0;
+    animator.tween(container as unknown as Record<string, number>, 'alpha', 0, 1, ANIM.fadeIn);
+
     subagentNpcs.set(childSessionId, {
       childSessionId,
       parentSessionId,
@@ -448,9 +647,23 @@ export function createScene(app: Application): Scene {
   function removeSubagentNpc(childSessionId: string, parentCallId: string): void {
     const view = subagentNpcs.get(childSessionId);
     if (view) {
-      if (view.container.parent) view.container.parent.removeChild(view.container);
-      view.container.destroy({ children: true });
+      // Detach from map immediately so a re-spawn would not collide with the
+      // fading container.
       subagentNpcs.delete(childSessionId);
+      const container = view.container;
+      animator.tween(
+        container as unknown as Record<string, number>,
+        'alpha',
+        container.alpha,
+        0,
+        ANIM.fadeOut,
+        {
+          onDone: () => {
+            if (container.parent) container.parent.removeChild(container);
+            container.destroy({ children: true });
+          },
+        },
+      );
     }
     removeSubagentRing(parentCallId);
     subagentDepths.delete(childSessionId);
@@ -459,13 +672,58 @@ export function createScene(app: Application): Scene {
     syncMirror();
   }
 
-  function flyFileToArchive(_sessionId: string, _path: string): void {
-    // M3c.2b: counter-only. The actual fly tween from the source NPC to the
-    // archive corner stack is M3c.3 polish. We retain the function signature
-    // so M3c.3 can drop in animation without an event-mapper change. Path
-    // parameter is reserved for M3c.3 (e.g. group glyphs by directory).
-    archiveCount += 1;
-    syncMirror();
+  function flyFileToArchive(sessionId: string, _path: string): void {
+    // M3c.3: single shared file-glyph (parchment sprite) flies from the source
+    // NPC's screen position to the bottom-right archive corner, then counter
+    // increments + sprite destroys. Per-path differentiation (group by
+    // directory, etc.) is out of M3c.3 scope.
+    const view = npcs.get(sessionId);
+    if (!view) {
+      archiveCount += 1;
+      syncMirror();
+      return;
+    }
+    const sprite = Sprite.from(SPRITES.glyphParchment);
+    sprite.anchor.set(0.5, 0.5);
+    sprite.width = 10;
+    sprite.height = 12;
+    // Fly is at root level (not inside the NPC container) so the path is in
+    // the same space as our target corner.
+    const startX = view.container.position.x;
+    const startY = view.container.position.y - SPRITE.npcH;
+    sprite.position.set(startX, startY);
+    spriteLayer.addChild(sprite);
+
+    // Bottom-right corner relative to the scene root's coordinate space. The
+    // root is centered on the viewport (defaultRootX/Y above); offset to
+    // approximate the visible bottom-right at 1× zoom.
+    const targetX = app.screen.width / 2 - 40;
+    const targetY = app.screen.height / 2 - 30;
+
+    animator.tween(
+      sprite.position as unknown as Record<string, number>,
+      'x',
+      startX,
+      targetX,
+      ANIM.fileFly,
+      { ease: easeOutQuad },
+    );
+    animator.tween(
+      sprite.position as unknown as Record<string, number>,
+      'y',
+      startY,
+      targetY,
+      ANIM.fileFly,
+      {
+        ease: easeOutQuad,
+        onDone: () => {
+          if (sprite.parent) sprite.parent.removeChild(sprite);
+          sprite.destroy();
+          archiveCount += 1;
+          syncMirror();
+        },
+      },
+    );
   }
 
   function attachPermissionSigil(
@@ -514,10 +772,33 @@ export function createScene(app: Application): Scene {
 
     view.container.addChild(sprite);
     sigils.set(requestId, { requestId, sessionId, toolName, autoDeny, sprite });
+
+    // Pulse: alpha cycles 1↔0.7 (interactive) or 0.6↔0.4 (auto-deny readonly).
+    const peak = autoDeny ? 0.6 : 1.0;
+    const trough = autoDeny ? 0.4 : 0.7;
+    const startMs = performance.now();
+    const cb = (_ticker: Ticker) => {
+      if (document.body.classList.contains('reduced-motion')) {
+        sprite.alpha = peak;
+        return;
+      }
+      const t = ((performance.now() - startMs) % ANIM.sigilPulse) / ANIM.sigilPulse;
+      // Sine wave between trough and peak.
+      const u = (Math.sin(t * Math.PI * 2) + 1) / 2; // 0..1
+      sprite.alpha = trough + (peak - trough) * u;
+    };
+    Ticker.shared.add(cb);
+    sigilTickers.set(requestId, cb);
+
     syncMirror();
   }
 
   function dismissPermissionSigil(requestId: string): void {
+    const cb = sigilTickers.get(requestId);
+    if (cb) {
+      Ticker.shared.remove(cb);
+      sigilTickers.delete(requestId);
+    }
     const sg = sigils.get(requestId);
     if (!sg) return;
     sg.sprite.removeAllListeners();
@@ -540,10 +821,19 @@ export function createScene(app: Application): Scene {
     }
     const sprite = Sprite.from(SPRITES.glyphParchment);
     sprite.anchor.set(0.5, 1);
-    sprite.position.set(0, -SPRITE.npcH - 32); // above the parchment glyph slot
+    const restY = -SPRITE.npcH - 32; // above the parchment glyph slot
+    sprite.position.set(0, restY);
     sprite.width = 14;
     sprite.height = 18;
     view.container.addChild(sprite);
+    animator.tween(
+      sprite.position as unknown as Record<string, number>,
+      'y',
+      restY,
+      restY - 4,
+      ANIM.glyphFloat,
+      { ease: easeOutQuad },
+    );
     const timer = setTimeout(() => {
       const gv = glyphs.get(key);
       if (!gv) return;
@@ -554,6 +844,35 @@ export function createScene(app: Application): Scene {
       syncMirror();
     }, 2400);
     glyphs.set(key, { kind: 'skill', sessionId, content: skillName, sprite, timer });
+  }
+
+  function shakeNpc(sessionId: string): void {
+    const view = npcs.get(sessionId);
+    if (!view) return;
+    const sprite = view.npcSprite;
+    const restX = sprite.position.x;
+    // Reduce-motion: do NOT install the per-frame ticker. The animator's
+    // short-circuit on the scratch tween below fires onDone synchronously,
+    // resetting position — visible result is a no-op, which is correct.
+    if (document.body.classList.contains('reduced-motion')) {
+      sprite.position.x = restX;
+      return;
+    }
+    // Per-frame ticker callback writes the shake offset onto the sprite.
+    // Removes itself when elapsed >= duration. Self-cleaning; no Map needed.
+    const startMs = performance.now();
+    const cb = (_ticker: Ticker) => {
+      const elapsed = performance.now() - startMs;
+      if (elapsed >= ANIM.bellShake) {
+        sprite.position.x = restX;
+        Ticker.shared.remove(cb);
+        return;
+      }
+      // 4 oscillations across the duration, ±3px amplitude.
+      const u = elapsed / ANIM.bellShake;
+      sprite.position.x = restX + 3 * Math.sin(u * Math.PI * 8);
+    };
+    Ticker.shared.add(cb);
   }
 
   function applyMutation(m: Mutation): void {
@@ -568,7 +887,7 @@ export function createScene(app: Application): Scene {
         updateStamina(m.sessionId, m.costUsd, m.model);
         break;
       case 'errorFlash':
-        errorFlash(m.message, m.sessionId);
+        errorFlash(m.message, m.sessionId, m.recoverable);
         break;
       case 'glyph':
         attachGlyph('parchment', m.sessionId, m.sprite, m.durationMs, m.content);
@@ -587,7 +906,28 @@ export function createScene(app: Application): Scene {
         retractToolIcon(m.callId);
         if (m.status === 'error') {
           const view = npcs.get(m.sessionId);
-          if (view) view.snapshot.state = 'errored';
+          if (view) {
+            view.snapshot.state = 'errored';
+            // Ember flash: drop body alpha to 0.4, then back to 1.
+            animator.tween(
+              view.body as unknown as Record<string, number>,
+              'alpha',
+              1,
+              0.4,
+              ANIM.errorFlash / 2,
+              {
+                onDone: () => {
+                  animator.tween(
+                    view.body as unknown as Record<string, number>,
+                    'alpha',
+                    0.4,
+                    1,
+                    ANIM.errorFlash / 2,
+                  );
+                },
+              },
+            );
+          }
         }
         break;
       }
@@ -609,19 +949,100 @@ export function createScene(app: Application): Scene {
       case 'permissionSigil':
         attachPermissionSigil(m.sessionId, m.requestId, m.autoDeny, m.toolName);
         break;
-      case 'dismissSigil':
-        // Decision (allow/deny/always) is in m.decision; M3c.3 polish renders a
-        // green/red flash before the sigil dismisses. M3c.2b just removes it.
-        dismissPermissionSigil(m.requestId);
+      case 'dismissSigil': {
+        // Flash the sigil tint before dismissal: trusting-green (autoAccept key
+        // in MODE_COLORS — the lore name "Trusting" lives in the comment, the
+        // wire mode-string is "autoAccept") for allow/always, ember-red for
+        // deny. Then remove. Reduced-motion short-circuits (the animator's
+        // onDone fires synchronously, so the flash is invisible but the
+        // dismissal still happens).
+        const sg = sigils.get(m.requestId);
+        if (sg) {
+          const flashTint = m.decision === 'deny' ? PALETTE.ember : MODE_COLORS.autoAccept;
+          sg.sprite.tint = flashTint;
+          // Hold for half the flash duration, then dismiss. Use a sentinel
+          // tween on a scratch object so reduced-motion still routes through
+          // animator's short-circuit.
+          const scratch: Record<string, number> = { t: 0 };
+          animator.tween(scratch, 't', 0, 1, ANIM.errorFlash, {
+            onDone: () => dismissPermissionSigil(m.requestId),
+          });
+        } else {
+          dismissPermissionSigil(m.requestId);
+        }
         break;
+      }
       case 'skillParchment':
         attachSkillParchment(m.sessionId, m.skillName);
+        break;
+      case 'shake':
+        shakeNpc(m.sessionId);
         break;
       default: {
         const _exhaustive: never = m;
         void _exhaustive;
         break;
       }
+    }
+  }
+
+  function startLanternFlicker(): void {
+    for (const lantern of lanternSprites) {
+      const startMs = performance.now() + Math.random() * 1000; // phase offset per lantern
+      const cb = (_ticker: Ticker) => {
+        if (document.body.classList.contains('reduced-motion')) {
+          lantern.alpha = 1;
+          return;
+        }
+        const t = ((performance.now() - startMs) % ANIM.lanternFlicker) / ANIM.lanternFlicker;
+        const u = (Math.sin(t * Math.PI * 2) + 1) / 2; // 0..1
+        lantern.alpha = 0.85 + u * 0.15; // 0.85..1.0
+      };
+      Ticker.shared.add(cb);
+      ambientTickers.push(cb);
+    }
+  }
+
+  function spawnEmberAt(x: number, y: number): void {
+    const ember = Sprite.from(SPRITES.emberParticle);
+    ember.anchor.set(0.5, 0.5);
+    ember.width = 4;
+    ember.height = 4;
+    ember.position.set(x + (Math.random() * 4 - 2), y);
+    ember.alpha = 1;
+    spriteLayer.addChild(ember);
+    emberParticles.add(ember);
+    animator.tween(
+      ember.position as unknown as Record<string, number>,
+      'y',
+      y,
+      y - 24,
+      ANIM.emberRise,
+      { ease: easeOutQuad },
+    );
+    animator.tween(ember as unknown as Record<string, number>, 'alpha', 1, 0, ANIM.emberRise, {
+      onDone: () => {
+        if (ember.parent) ember.parent.removeChild(ember);
+        ember.destroy();
+        emberParticles.delete(ember);
+      },
+    });
+  }
+
+  function startEmberSpawner(): void {
+    // Each lantern emits one ember every ~2000ms. setInterval is fine here —
+    // the ambient cadence isn't frame-precise.
+    for (const lantern of lanternSprites) {
+      const lanternX = lantern.position.x;
+      const lanternY = lantern.position.y - 50; // near the lamp head, not the post base
+      const interval = setInterval(
+        () => {
+          if (document.body.classList.contains('reduced-motion')) return;
+          spawnEmberAt(lanternX, lanternY);
+        },
+        2000 + Math.random() * 500,
+      ); // jitter so the four lanterns don't pulse in lockstep
+      ambientIntervals.push(interval);
     }
   }
 
@@ -700,6 +1121,22 @@ export function createScene(app: Application): Scene {
       return { x: root.position.x, y: root.position.y };
     },
     destroy(): void {
+      animator.cancelAll();
+      for (const cb of idleBobTickers.values()) Ticker.shared.remove(cb);
+      idleBobTickers.clear();
+      for (const cb of ringTickers.values()) Ticker.shared.remove(cb);
+      ringTickers.clear();
+      for (const cb of sigilTickers.values()) Ticker.shared.remove(cb);
+      sigilTickers.clear();
+      for (const cb of ambientTickers) Ticker.shared.remove(cb);
+      ambientTickers.length = 0;
+      for (const interval of ambientIntervals) clearInterval(interval);
+      ambientIntervals.length = 0;
+      for (const ember of emberParticles) {
+        if (ember.parent) ember.parent.removeChild(ember);
+        ember.destroy();
+      }
+      emberParticles.clear();
       for (const gv of glyphs.values()) {
         clearTimeout(gv.timer);
         if (gv.sprite.parent) gv.sprite.parent.removeChild(gv.sprite);

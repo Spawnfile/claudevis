@@ -37,6 +37,8 @@ export const SPRITES = {
   sigilPermission: '/sprites/sigil-permission.svg',
   sigilError: '/sprites/sigil-error.svg',
   summonRing: '/sprites/summon-ring.svg',
+  // M3c.3 — ambient particle
+  emberParticle: '/sprites/ember-particle.svg',
 } as const;
 
 export type SpriteName = keyof typeof SPRITES;
