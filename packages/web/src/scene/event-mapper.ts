@@ -1,10 +1,10 @@
 // packages/web/src/scene/event-mapper.ts
 // Pure function: Event → Mutation[]. Exhaustive over Event['type']; TypeScript
-// proves coverage via the `_exhaustive: never` arm. M3c.1 active cases are
-// session.started/session.ended/tokens.updated/error. M3c.2a added user.prompt /
-// agent.thinking / agent.message / tool.started / tool.completed. M3c.2b adds
-// the remaining 6: subagent.dispatched / subagent.completed / file.changed /
-// permission.requested / permission.resolved / skill.invoked.
+// proves coverage via the `_exhaustive: never` arm. M4.1 closes the vocabulary
+// matrix: session.mode.changed and session.idle now produce mutations. The
+// session.started case carries an initial mode of 'auto' — session-manager
+// emits session.mode.changed immediately after, so the value updates within
+// microseconds when the user requested a non-default mode.
 //
 // Permission auto-deny synthesis (M3b.1): the server emits permission.requested
 // with `requestId: 'auto-deny-<N>'` for events synthesized from the upstream
@@ -19,7 +19,18 @@ const SPEECH_TRUNCATE = 40;
 export function eventToMutations(e: Event): Mutation[] {
   switch (e.type) {
     case 'session.started':
-      return [{ kind: 'spawnNpc', sessionId: e.sessionId, model: e.model, name: e.name }];
+      return [
+        {
+          kind: 'spawnNpc',
+          sessionId: e.sessionId,
+          model: e.model,
+          name: e.name,
+          // Initial mode is 'auto'; session-manager emits session.mode.changed
+          // immediately after session.started carrying the actual chosen mode,
+          // so the icon updates within microseconds for non-default modes.
+          mode: 'auto',
+        },
+      ];
     case 'session.ended':
       return [{ kind: 'removeNpc', sessionId: e.sessionId }];
     case 'user.prompt':
@@ -33,7 +44,6 @@ export function eventToMutations(e: Event): Mutation[] {
         },
       ];
     case 'agent.thinking':
-      // Recency-based fade is owned by scene.ts; mutation passes content only.
       return [{ kind: 'thoughtCloud', sessionId: e.sessionId, content: e.content }];
     case 'agent.message':
       return [
@@ -48,11 +58,7 @@ export function eventToMutations(e: Event): Mutation[] {
       return [{ kind: 'attachTool', sessionId: e.sessionId, callId: e.callId, name: e.name }];
     case 'tool.completed':
       return [{ kind: 'retractTool', sessionId: e.sessionId, callId: e.callId, status: e.status }];
-    // M3c.2b fills these:
     case 'subagent.dispatched':
-      // Two mutations per design §4.4.3: ring around parent + child NPC spawn.
-      // The ring is keyed by parentCallId in scene.ts so the matching
-      // subagent.completed (which carries the same parentCallId) can clean it up.
       return [
         { kind: 'summonRing', parentSessionId: e.sessionId, parentCallId: e.parentCallId },
         {
@@ -71,7 +77,6 @@ export function eventToMutations(e: Event): Mutation[] {
         },
       ];
     case 'file.changed':
-      // path-only mutation; M4 may add diff math (+/-) for richer rendering.
       return [{ kind: 'fileFly', sessionId: e.sessionId, path: e.path }];
     case 'permission.requested':
       return [
@@ -87,10 +92,11 @@ export function eventToMutations(e: Event): Mutation[] {
       return [{ kind: 'dismissSigil', requestId: e.requestId, decision: e.decision }];
     case 'skill.invoked':
       return [{ kind: 'skillParchment', sessionId: e.sessionId, skillName: e.skillName }];
-    // M3c.1 already wired:
+    // M4.1: vocabulary closure.
     case 'session.idle':
+      return [{ kind: 'setIdle', sessionId: e.sessionId, idle: true }];
     case 'session.mode.changed':
-      return [];
+      return [{ kind: 'swapModeIcon', sessionId: e.sessionId, mode: e.mode }];
     case 'tokens.updated':
       return [
         { kind: 'updateStamina', sessionId: e.sessionId, costUsd: e.costUsd, model: e.model },

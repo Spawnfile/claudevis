@@ -1,6 +1,8 @@
 // M3c.1 + M3c.2a + M3c.2b sprites. Paths are web-root-absolute; Vite serves
 // `packages/web/public/` at /.
 
+import type { PermissionMode } from '@claudevis/shared';
+
 export const SPRITES = {
   npc: '/sprites/npc.svg',
   tileGrass: '/sprites/tile-grass.svg',
@@ -69,4 +71,15 @@ export const AGENT_SPRITE_KEY: Readonly<Record<string, SpriteName>> = {
   'build-error-resolver': 'badgeSmithy',
   'tdd-guide': 'badgeApprentice',
   researcher: 'badgeWanderer',
+};
+
+// PermissionMode → mode-icon sprite key. The 4 mode sprites were added to
+// SPRITES in M3c.2b but never instantiated; M4.1 wires them via the new
+// swapModeIcon mutation handler in scene.ts. Keys are wire mode-strings
+// (per protocol PermissionMode union); comments name the lore character.
+export const MODE_ICON: Readonly<Record<PermissionMode, SpriteName>> = {
+  auto: 'modeHeadstrong', // Headstrong
+  plan: 'modeCartographer', // Cartographer
+  autoAccept: 'modeTrusting', // Trusting
+  strict: 'modeWary', // Wary
 };

@@ -19,7 +19,13 @@ describe('event-mapper.eventToMutations (M3c.1 + M3c.2a + M3c.2b)', () => {
       model: 'sonnet',
     };
     expect(eventToMutations(e)).toEqual([
-      { kind: 'spawnNpc', sessionId: 'session-1', model: 'sonnet', name: 'test-session' },
+      {
+        kind: 'spawnNpc',
+        sessionId: 'session-1',
+        model: 'sonnet',
+        name: 'test-session',
+        mode: 'auto',
+      },
     ]);
   });
 
@@ -279,9 +285,22 @@ describe('event-mapper.eventToMutations (M3c.1 + M3c.2a + M3c.2b)', () => {
     ]);
   });
 
-  // M3c.3: the last case fills.
+  // M3c.3: the last visual case fills.
   it('interrupt.signaled → shake mutation', () => {
     const e: Event = { ...baseEvent, type: 'interrupt.signaled' };
     expect(eventToMutations(e)).toEqual([{ kind: 'shake', sessionId: 'session-1' }]);
+  });
+
+  // M4.1: vocabulary closure — last two cases fill.
+  it('session.mode.changed → swapModeIcon mutation', () => {
+    const e: Event = { ...baseEvent, type: 'session.mode.changed', mode: 'plan' };
+    expect(eventToMutations(e)).toEqual([
+      { kind: 'swapModeIcon', sessionId: 'session-1', mode: 'plan' },
+    ]);
+  });
+
+  it('session.idle → setIdle mutation', () => {
+    const e: Event = { ...baseEvent, type: 'session.idle', durationMs: 30000 };
+    expect(eventToMutations(e)).toEqual([{ kind: 'setIdle', sessionId: 'session-1', idle: true }]);
   });
 });

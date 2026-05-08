@@ -168,4 +168,77 @@ describe('dom-mirror.mirrorState', () => {
     mirrorState(emptyInput());
     expect(document.querySelector('[data-scene-subagent-spawn-count]')).toBeNull();
   });
+
+  // M4.1 T5: new attributes for mode-icon swap + idle latch.
+  it('writes data-scene-npc-mode for each NPC (M4.1)', () => {
+    const npcs = new Map<string, NpcEntry>([
+      [
+        'session-1',
+        {
+          sessionId: 'session-1',
+          model: 'sonnet',
+          name: 's1',
+          costUsd: 0,
+          state: 'idle',
+          mode: 'plan',
+          idle: false,
+        },
+      ],
+    ]);
+    mirrorState({ ...emptyInput(), npcs });
+    const el = document.querySelector('[data-scene-npc-id="session-1"]')!;
+    expect(el.getAttribute('data-scene-npc-mode')).toBe('plan');
+  });
+
+  it('writes data-scene-npc-idle reflecting the boolean (M4.1)', () => {
+    const npcs = new Map<string, NpcEntry>([
+      [
+        'a',
+        {
+          sessionId: 'a',
+          model: 'sonnet',
+          name: 'a',
+          costUsd: 0,
+          state: 'idle',
+          mode: 'auto',
+          idle: true,
+        },
+      ],
+      [
+        'b',
+        {
+          sessionId: 'b',
+          model: 'sonnet',
+          name: 'b',
+          costUsd: 0,
+          state: 'idle',
+          mode: 'auto',
+          idle: false,
+        },
+      ],
+    ]);
+    mirrorState({ ...emptyInput(), npcs });
+    expect(
+      document.querySelector('[data-scene-npc-id="a"]')!.getAttribute('data-scene-npc-idle'),
+    ).toBe('true');
+    expect(
+      document.querySelector('[data-scene-npc-id="b"]')!.getAttribute('data-scene-npc-idle'),
+    ).toBe('false');
+  });
+
+  it('falls back to mode="auto" / idle="false" when fields are absent (M4.1 defensive)', () => {
+    // Existing fixture pattern (mode/idle not supplied) — writer must produce
+    // sensible defaults so old test fixtures and intermediate scene states
+    // (snapshot before T11 sets idle) remain observable as data attributes.
+    const npcs = new Map<string, NpcEntry>([
+      [
+        'session-1',
+        { sessionId: 'session-1', model: 'sonnet', name: 's1', costUsd: 0, state: 'idle' },
+      ],
+    ]);
+    mirrorState({ ...emptyInput(), npcs });
+    const el = document.querySelector('[data-scene-npc-id="session-1"]')!;
+    expect(el.getAttribute('data-scene-npc-mode')).toBe('auto');
+    expect(el.getAttribute('data-scene-npc-idle')).toBe('false');
+  });
 });

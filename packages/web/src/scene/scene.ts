@@ -1,4 +1,4 @@
-import type { Event } from '@claudevis/shared';
+import type { Event, PermissionMode } from '@claudevis/shared';
 // packages/web/src/scene/scene.ts
 import { type Application, Container, Graphics, Sprite, Texture, Ticker } from 'pixi.js';
 import { ANIM, animator, easeOutQuad } from './animator';
@@ -6,7 +6,13 @@ import { mirrorState } from './dom-mirror';
 import { eventToMutations } from './event-mapper';
 import { npcLayoutSlot, tileToScreen } from './grid';
 import { MODEL_COLORS, MODE_COLORS, STAMINA_GLYPH } from './lore-colors';
-import { AGENT_SPRITE_KEY, SPRITES, type SpriteName, TOOL_SPRITE_KEY } from './sprite-manifest';
+import {
+  AGENT_SPRITE_KEY,
+  MODE_ICON,
+  SPRITES,
+  type SpriteName,
+  TOOL_SPRITE_KEY,
+} from './sprite-manifest';
 import { costToSegments } from './stamina';
 import { PALETTE, SPRITE, TILE } from './theme';
 import type { Mutation, NpcSnapshot } from './types';
@@ -19,6 +25,9 @@ interface NpcView {
   tile: Sprite;
   staminaGlyph: Sprite;
   staminaSegments: Container;
+  // M4.1: mode-icon sprite shown above the NPC. Re-instantiated by
+  // swapModeIcon when session.mode.changed fires.
+  modeIcon: Sprite;
 }
 
 type GlyphKind = 'parchment' | 'thought' | 'speech' | 'skill';
@@ -194,7 +203,7 @@ export function createScene(app: Application): Scene {
     return MODEL_COLORS[model as keyof typeof MODEL_COLORS] ?? 0xffffff;
   }
 
-  function spawnNpc(sessionId: string, model: string, name: string): void {
+  function spawnNpc(sessionId: string, model: string, name: string, mode: PermissionMode): void {
     if (npcs.has(sessionId)) return;
 
     const slot = npcLayoutSlot(nextSlotIdx++);
@@ -247,16 +256,27 @@ export function createScene(app: Application): Scene {
 
     container.addChild(staminaGlyph, staminaSegments);
 
+    // M4.1: mode-icon — small sprite above the NPC's head identifying the
+    // current PermissionMode. Re-instantiated by swapModeIcon when the
+    // session changes mode mid-flight.
+    const modeIcon = Sprite.from(SPRITES[MODE_ICON[mode]]);
+    modeIcon.anchor.set(0.5, 1);
+    modeIcon.position.set(8, -SPRITE.npcH - 6);
+    modeIcon.width = SPRITE.staminaGlyph;
+    modeIcon.height = SPRITE.staminaGlyph;
+    container.addChild(modeIcon);
+
     spriteLayer.addChild(container);
 
     npcs.set(sessionId, {
-      snapshot: { sessionId, model, name, costUsd: 0, state: 'idle' },
+      snapshot: { sessionId, model, name, costUsd: 0, state: 'idle', mode, idle: false },
       container,
       body,
       npcSprite,
       tile,
       staminaGlyph,
       staminaSegments,
+      modeIcon,
     });
     subagentDepths.set(sessionId, 0);
 
@@ -300,6 +320,35 @@ export function createScene(app: Application): Scene {
     syncMirror();
   }
 
+  function swapModeIcon(sessionId: string, mode: PermissionMode): void {
+    const view = npcs.get(sessionId);
+    if (!view) return;
+    if (view.snapshot.mode === mode) return;
+    // Destroy the old icon, attach a new one at the same slot.
+    const oldX = view.modeIcon.position.x;
+    const oldY = view.modeIcon.position.y;
+    if (view.modeIcon.parent) view.modeIcon.parent.removeChild(view.modeIcon);
+    view.modeIcon.destroy();
+    const fresh = Sprite.from(SPRITES[MODE_ICON[mode]]);
+    fresh.anchor.set(0.5, 1);
+    fresh.position.set(oldX, oldY);
+    fresh.width = SPRITE.staminaGlyph;
+    fresh.height = SPRITE.staminaGlyph;
+    view.container.addChild(fresh);
+    view.modeIcon = fresh;
+    view.snapshot.mode = mode;
+  }
+
+  function setIdle(sessionId: string, idle: boolean): void {
+    const view = npcs.get(sessionId);
+    if (!view) return;
+    if (view.snapshot.idle === idle) return;
+    view.snapshot.idle = idle;
+    // Dim/restore the stamina segments. Bob slowdown is read per-frame by
+    // the existing idle-bob ticker via view.snapshot.idle (no ticker swap).
+    view.staminaSegments.alpha = idle ? 0.6 : 1.0;
+  }
+
   function startIdleBob(sessionId: string): void {
     const view = npcs.get(sessionId);
     if (!view) return;
@@ -312,9 +361,11 @@ export function createScene(app: Application): Scene {
         view.npcSprite.position.y = restY;
         return;
       }
-      const t = ((performance.now() - startMs) % ANIM.npcIdleBob) / ANIM.npcIdleBob;
-      // Sine-wave bob: 2px amplitude.
-      view.npcSprite.position.y = restY - 2 * Math.sin(t * Math.PI * 2);
+      // M4.1: when view is idle, halve amplitude AND double period.
+      const period = view.snapshot.idle ? ANIM.npcIdleBob * 2 : ANIM.npcIdleBob;
+      const amplitude = view.snapshot.idle ? 1 : 2;
+      const t = ((performance.now() - startMs) % period) / period;
+      view.npcSprite.position.y = restY - amplitude * Math.sin(t * Math.PI * 2);
     };
     Ticker.shared.add(cb);
     idleBobTickers.set(sessionId, cb);
@@ -876,9 +927,28 @@ export function createScene(app: Application): Scene {
   }
 
   function applyMutation(m: Mutation): void {
+    // M4.1: any mutation that targets a specific session implicitly wakes
+    // the session from idle. The setIdle case is the ONE exception — it
+    // sets the latch — so we skip the auto-clear when m.kind === 'setIdle'.
+    // Mutations without a sessionId (e.g. dismissSigil, removeSubagentNpc,
+    // summonRing's parentSessionId-only shape) skip the clear because they
+    // don't pertain to any single NPC's idle state.
+    if (m.kind !== 'setIdle') {
+      // Use a runtime check + cast: 'sessionId' in m narrows to variants
+      // that declare the field, but errorFlash declares it optional. The
+      // typeof check excludes the undefined branch.
+      const maybeWithSession = m as { sessionId?: unknown };
+      if (typeof maybeWithSession.sessionId === 'string') {
+        const view = npcs.get(maybeWithSession.sessionId);
+        if (view?.snapshot.idle) {
+          view.snapshot.idle = false;
+          view.staminaSegments.alpha = 1.0;
+        }
+      }
+    }
     switch (m.kind) {
       case 'spawnNpc':
-        spawnNpc(m.sessionId, m.model, m.name);
+        spawnNpc(m.sessionId, m.model, m.name, m.mode);
         break;
       case 'removeNpc':
         removeNpc(m.sessionId);
@@ -977,6 +1047,12 @@ export function createScene(app: Application): Scene {
         break;
       case 'shake':
         shakeNpc(m.sessionId);
+        break;
+      case 'swapModeIcon':
+        swapModeIcon(m.sessionId, m.mode);
+        break;
+      case 'setIdle':
+        setIdle(m.sessionId, m.idle);
         break;
       default: {
         const _exhaustive: never = m;

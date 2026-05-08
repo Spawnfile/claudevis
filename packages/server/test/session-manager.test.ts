@@ -206,3 +206,149 @@ describe('SessionManager — skill.invoked synthesis', () => {
     await mgr.shutdown();
   });
 });
+
+describe('SessionManager — session.mode.changed emission (M4.1)', () => {
+  it('emits session.mode.changed after session.started carrying the requested mode', async () => {
+    const store = createEventStore({ kind: 'memory' });
+    const events: Event[] = [];
+    const mgr = createSessionManager({
+      store,
+      onEvent: (e) => events.push(e),
+      claudeCommand: { command: 'bun', baseArgs: [FAKE] },
+      mode: 'fake',
+    });
+    const id = await mgr.create({
+      cwd: process.cwd(),
+      name: 'test',
+      model: 'sonnet',
+      mode: 'plan',
+    });
+    await new Promise((r) => setTimeout(r, 200));
+    const startedIdx = events.findIndex((e) => e.type === 'session.started' && e.sessionId === id);
+    // The mode event we care about is the one that matches the REQUESTED mode
+    // (in fake mode there's only one — the deferred emit from session-manager
+    // routed via the fake line handler's session.started case).
+    const modeIdx = events.findIndex(
+      (e) =>
+        e.type === 'session.mode.changed' &&
+        e.sessionId === id &&
+        (e as { mode: string }).mode === 'plan',
+    );
+    expect(startedIdx).toBeGreaterThanOrEqual(0);
+    expect(modeIdx).toBeGreaterThan(startedIdx);
+    const modeEvent = events[modeIdx];
+    if (modeEvent?.type !== 'session.mode.changed') throw new Error('typecheck');
+    expect(modeEvent.mode).toBe('plan');
+    await mgr.kill(id);
+  });
+
+  it('defaults to mode=auto when session.create.mode is not provided', async () => {
+    const store = createEventStore({ kind: 'memory' });
+    const events: Event[] = [];
+    const mgr = createSessionManager({
+      store,
+      onEvent: (e) => events.push(e),
+      claudeCommand: { command: 'bun', baseArgs: [FAKE] },
+      mode: 'fake',
+    });
+    const id = await mgr.create({ cwd: process.cwd(), name: 'test', model: 'sonnet' });
+    await new Promise((r) => setTimeout(r, 200));
+    const startedIdx = events.findIndex((e) => e.type === 'session.started' && e.sessionId === id);
+    const modeIdx = events.findIndex(
+      (e) => e.type === 'session.mode.changed' && e.sessionId === id,
+    );
+    expect(startedIdx).toBeGreaterThanOrEqual(0);
+    expect(modeIdx).toBeGreaterThan(startedIdx);
+    const modeEvent = events[modeIdx];
+    if (modeEvent?.type !== 'session.mode.changed') throw new Error('typecheck');
+    expect(modeEvent.mode).toBe('auto');
+    await mgr.kill(id);
+  });
+});
+
+describe('SessionManager — session.idle timer (M4.1)', () => {
+  it('emits session.idle after CLAUDEVIS_IDLE_MS of subprocess silence', async () => {
+    process.env.CLAUDEVIS_IDLE_MS = '50';
+    const store = createEventStore({ kind: 'memory' });
+    const events: Event[] = [];
+    const mgr = createSessionManager({
+      store,
+      onEvent: (e) => events.push(e),
+      claudeCommand: { command: 'bun', baseArgs: [FAKE] },
+      mode: 'fake',
+    });
+    const id = await mgr.create({ cwd: process.cwd(), name: 'idle', model: 'sonnet' });
+    // Wait past the 50ms threshold + a margin for setTimeout scheduling.
+    await new Promise((r) => setTimeout(r, 200));
+    const idle = events.find((e) => e.type === 'session.idle' && e.sessionId === id);
+    expect(idle).toBeTruthy();
+    if (idle?.type !== 'session.idle') throw new Error('typecheck');
+    expect(idle.durationMs).toBe(50);
+    await mgr.kill(id);
+    // biome-ignore lint/performance/noDelete: test cleanup of env var
+    delete process.env.CLAUDEVIS_IDLE_MS;
+  });
+
+  it('clears the idle timer on kill', async () => {
+    process.env.CLAUDEVIS_IDLE_MS = '50';
+    const store = createEventStore({ kind: 'memory' });
+    const events: Event[] = [];
+    const mgr = createSessionManager({
+      store,
+      onEvent: (e) => events.push(e),
+      claudeCommand: { command: 'bun', baseArgs: [FAKE] },
+      mode: 'fake',
+    });
+    const id = await mgr.create({ cwd: process.cwd(), name: 'idle-kill', model: 'sonnet' });
+    await mgr.kill(id);
+    const before = events.filter((e) => e.type === 'session.idle').length;
+    await new Promise((r) => setTimeout(r, 150));
+    const after = events.filter((e) => e.type === 'session.idle').length;
+    // Ended sessions don't emit subsequent idle events. The "before" count
+    // captures any timer that fired before kill (could be 0 or 1 depending
+    // on race with the fake fixture's startup); "after" must equal "before"
+    // because the kill cleared the timer.
+    expect(after).toBe(before);
+    // biome-ignore lint/performance/noDelete: test cleanup of env var
+    delete process.env.CLAUDEVIS_IDLE_MS;
+  });
+
+  it('CLAUDEVIS_IDLE_MS=0 disables idle synthesis entirely', async () => {
+    process.env.CLAUDEVIS_IDLE_MS = '0';
+    const store = createEventStore({ kind: 'memory' });
+    const events: Event[] = [];
+    const mgr = createSessionManager({
+      store,
+      onEvent: (e) => events.push(e),
+      claudeCommand: { command: 'bun', baseArgs: [FAKE] },
+      mode: 'fake',
+    });
+    const id = await mgr.create({ cwd: process.cwd(), name: 'no-idle', model: 'sonnet' });
+    await new Promise((r) => setTimeout(r, 150));
+    const idle = events.find((e) => e.type === 'session.idle' && e.sessionId === id);
+    expect(idle).toBeUndefined();
+    await mgr.kill(id);
+    // biome-ignore lint/performance/noDelete: test cleanup of env var
+    delete process.env.CLAUDEVIS_IDLE_MS;
+  });
+
+  it('falls back to 30000ms default when CLAUDEVIS_IDLE_MS is non-numeric', async () => {
+    process.env.CLAUDEVIS_IDLE_MS = 'off';
+    const store = createEventStore({ kind: 'memory' });
+    const events: Event[] = [];
+    const mgr = createSessionManager({
+      store,
+      onEvent: (e) => events.push(e),
+      claudeCommand: { command: 'bun', baseArgs: [FAKE] },
+      mode: 'fake',
+    });
+    const id = await mgr.create({ cwd: process.cwd(), name: 'nan', model: 'sonnet' });
+    // Wait 200ms — well under the 30s default. No idle should fire.
+    await new Promise((r) => setTimeout(r, 200));
+    const idle = events.find((e) => e.type === 'session.idle' && e.sessionId === id);
+    expect(idle).toBeUndefined();
+    await mgr.kill(id);
+    // biome-ignore lint/performance/noDelete: test cleanup of env var
+    delete process.env.CLAUDEVIS_IDLE_MS;
+  });
+});

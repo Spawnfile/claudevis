@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { Event, SkillEntry } from '@claudevis/shared';
+import type { Event, PermissionMode, SkillEntry } from '@claudevis/shared';
 import { buildSkillEntries, extractInvokableNames } from './catalog.js';
 import type { EventStore } from './event-store.js';
 import { detectGitInfo } from './git-info.js';
@@ -9,7 +9,13 @@ import { buildSpawnArgs, expandTilde } from './spawn-args.js';
 import { type SubprocessHandle, spawnSubprocess } from './subprocess.js';
 
 export interface SessionManager {
-  create(opts: { cwd: string; name?: string; model?: string; resume?: string }): Promise<string>;
+  create(opts: {
+    cwd: string;
+    name?: string;
+    model?: string;
+    resume?: string;
+    mode?: PermissionMode;
+  }): Promise<string>;
   send(opts: { sessionId: string; content: string }): Promise<void>;
   interrupt(sessionId: string): Promise<void>;
   clear(sessionId: string): Promise<void>;
@@ -56,12 +62,32 @@ interface SessionState {
    * skill.invoked before user.prompt.
    */
   knownInvokableNames: Set<string>;
+  // M4.1: tracks the most recently emitted PermissionMode so a parser-side
+  // system/init.permissionMode read can suppress duplicate emissions.
+  lastMode: PermissionMode;
+  // M4.1 (fake mode only): when set, the fake-mode line handler's
+  // session.started case emits session.mode.changed{value} immediately
+  // after the fixture's session.started passes through. Real mode never
+  // sets this (session.mode.changed is emitted sync in create()). Cleared
+  // to null after the deferred emit fires so subsequent session.started
+  // events (theoretical: if fixture re-sends) don't re-emit.
+  modeChangedDeferred: PermissionMode | null;
+  // M4.1: per-session idle timer state.
+  idleTimer: ReturnType<typeof setTimeout> | null;
+  idleEmitted: boolean;
 }
 
 const newId = () => `sess-${randomUUID().slice(0, 8)}`;
 const newEventId = () => `ev-${randomUUID().slice(0, 12)}`;
 
 export function createSessionManager(opts: SessionManagerOptions): SessionManager {
+  // M4.1: idle threshold (ms); 0 disables emission entirely (test path).
+  // Non-numeric env values (e.g. CLAUDEVIS_IDLE_MS=off) fall back to the
+  // 30000 default rather than producing a NaN that would fire the timer
+  // immediately and emit a session.idle with durationMs: NaN.
+  const IDLE_MS_RAW = Number(process.env.CLAUDEVIS_IDLE_MS ?? 30_000);
+  const IDLE_MS = Number.isFinite(IDLE_MS_RAW) ? IDLE_MS_RAW : 30_000;
+
   const sessions = new Map<string, SessionState>();
 
   // requestId → sessionId lookup so permission.respond Commands can route to
@@ -74,6 +100,35 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
   const cleanupPermissionsForSession = (sessionId: string) => {
     for (const [requestId, sid] of pendingPermissions) {
       if (sid === sessionId) pendingPermissions.delete(requestId);
+    }
+  };
+
+  const armIdleTimer = (state: SessionState) => {
+    if (IDLE_MS <= 0) return;
+    if (state.idleTimer) clearTimeout(state.idleTimer);
+    state.idleTimer = setTimeout(() => {
+      if (!sessions.has(state.id)) return;
+      if (state.idleEmitted) return;
+      state.idleEmitted = true;
+      emit({
+        id: newEventId(),
+        ts: Date.now(),
+        sessionId: state.id,
+        type: 'session.idle',
+        durationMs: IDLE_MS,
+      });
+    }, IDLE_MS);
+  };
+
+  const resetIdle = (state: SessionState) => {
+    state.idleEmitted = false;
+    armIdleTimer(state);
+  };
+
+  const clearIdleTimer = (state: SessionState) => {
+    if (state.idleTimer) {
+      clearTimeout(state.idleTimer);
+      state.idleTimer = null;
     }
   };
 
@@ -113,6 +168,22 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
           repo: state.repo,
           branch: state.branch,
         });
+        // M4.1: fire deferred session.mode.changed (set in create() for fake
+        // mode) immediately after session.started so frontend sees the
+        // ordering invariant [started, mode.changed]. Cleared to null after
+        // emission so a re-emitted session.started from the fixture (atypical)
+        // does not re-fire the deferred mode.
+        if (state.modeChangedDeferred !== null) {
+          state.lastMode = state.modeChangedDeferred;
+          emit({
+            id: newEventId(),
+            ts: Date.now(),
+            sessionId: state.id,
+            type: 'session.mode.changed',
+            mode: state.modeChangedDeferred,
+          });
+          state.modeChangedDeferred = null;
+        }
         return;
       }
       case 'agent.message': {
@@ -223,6 +294,25 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
         });
         return;
       }
+      case 'session.mode.changed': {
+        // M4.1: fake fixture's /mode-test sentinel emits mid-session mode swaps.
+        // Validate the mode is one of the known PermissionMode literals; default
+        // 'auto' for unknown values (defensive — fixture should always send valid).
+        const m =
+          line.mode === 'auto' ||
+          line.mode === 'plan' ||
+          line.mode === 'autoAccept' ||
+          line.mode === 'strict'
+            ? line.mode
+            : 'auto';
+        state.lastMode = m;
+        emit({
+          ...base,
+          type: 'session.mode.changed',
+          mode: m,
+        });
+        return;
+      }
       case 'session.idle': {
         emit({
           ...base,
@@ -285,6 +375,7 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
 
   const wireExit = (state: SessionState) => {
     state.sub.onExit((code) => {
+      clearIdleTimer(state);
       emit({
         id: newEventId(),
         ts: Date.now(),
@@ -300,10 +391,11 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
   };
 
   return {
-    create: async ({ cwd: rawCwd, name, model, resume }) => {
+    create: async ({ cwd: rawCwd, name, model, resume, mode }) => {
       const cwd = expandTilde(rawCwd);
       const id = newId();
       const resolvedModel = model ?? 'sonnet';
+      const resolvedMode: PermissionMode = mode ?? 'auto';
       const git = detectGitInfo(cwd);
       // Build state shell BEFORE spawn so the eager onLine handler closes
       // over a stable reference.
@@ -315,6 +407,10 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
         repo: git.repo,
         branch: git.branch,
         knownInvokableNames: new Set<string>(),
+        lastMode: resolvedMode,
+        modeChangedDeferred: null,
+        idleTimer: null,
+        idleEmitted: false,
         // sub is filled in immediately below — declared here for type safety.
         // biome-ignore lint/suspicious/noExplicitAny: hole filled synchronously
         sub: undefined as any,
@@ -336,6 +432,11 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
           // without waiting for SessionStart hooks (which can take several
           // seconds before the delayed `system/init` line lands).
           emitSessionStartedFromInit: false,
+          // M4.1: parser dedup against SessionManager's known mode. Note this
+          // is a snapshot at construction time; if the user later issues
+          // session.setMode (currently stubbed), the parser would not see the
+          // update. Acceptable for M4.1 — setMode is out-of-scope.
+          currentMode: state.lastMode,
           onCatalog: (raw) => {
             const entries = buildSkillEntries({
               skills: Array.isArray(raw.skills) ? raw.skills : [],
@@ -355,14 +456,26 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
             const r = raw as { type?: string; subtype?: string };
             console.log(`[claudevis] line type=${r?.type} subtype=${r?.subtype ?? '-'} sess=${id}`);
           }
+          resetIdle(state);
           const events = parse(raw);
           if (process.env.CLAUDEVIS_DEBUG === '1' && events.length === 0) {
             console.log('[claudevis]   -> dropped (parser returned 0 events)');
           }
-          for (const ev of events) emit(ev);
+          for (const ev of events) {
+            // M4.1: keep state.lastMode in sync with parser-emitted mode
+            // events so future parser reconstructions use the correct
+            // dedup snapshot. Mirrors the fake handler's session.mode.changed
+            // case + the deferred-emit path's lastMode update.
+            if (ev.type === 'session.mode.changed') state.lastMode = ev.mode;
+            emit(ev);
+          }
         };
       } else {
-        lineHandler = makeFakeLineHandler(state);
+        const fakeHandler = makeFakeLineHandler(state);
+        lineHandler = (raw) => {
+          resetIdle(state);
+          fakeHandler(raw);
+        };
       }
 
       const args = buildSpawnArgs({
@@ -392,7 +505,9 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
       // finish, which can take seconds. Emit session.started locally now so
       // the session card appears in the UI immediately. The parser is
       // configured with emitSessionStartedFromInit:false above, so when init
-      // eventually arrives it is silently latched, not re-emitted.
+      // eventually arrives it is silently latched, not re-emitted. M4.1
+      // additionally emits session.mode.changed{resolvedMode} in the same
+      // sync code path so the frontend sees [started, mode.changed] adjacent.
       if (opts.mode === 'real') {
         emit({
           id: newEventId(),
@@ -405,7 +520,24 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
           repo: git.repo,
           branch: git.branch,
         });
+        emit({
+          id: newEventId(),
+          ts: Date.now(),
+          sessionId: id,
+          type: 'session.mode.changed',
+          mode: resolvedMode,
+        });
+        state.lastMode = resolvedMode;
+      } else {
+        // M4.1 (fake mode): the fixture emits session.started async via the
+        // line handler. Defer the mode emission so the fake handler's
+        // session.started case fires it RIGHT AFTER session.started — the
+        // ordering invariant [started, mode.changed] holds in both modes.
+        state.modeChangedDeferred = resolvedMode;
       }
+
+      // M4.1: arm the idle timer; resets on every subsequent line received.
+      armIdleTimer(state);
 
       return id;
     },
@@ -462,6 +594,10 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
       const s = sessions.get(sessionId);
       if (!s) throw new Error(`no session ${sessionId}`);
       cleanupPermissionsForSession(sessionId);
+      // M4.1: clear forces a fresh idle window after the /clear prompt is
+      // processed. Re-arm via resetIdle so the next line received resets the
+      // latch correctly.
+      resetIdle(s);
       // For walking skeleton we model `/clear` as sending the literal text.
       // Real-claude integration in M2 will use the proper SDK semantics.
       s.sub.write({ type: 'user.prompt', content: '/clear' });
@@ -469,6 +605,7 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
     kill: async (sessionId) => {
       const s = sessions.get(sessionId);
       if (!s) return;
+      clearIdleTimer(s);
       cleanupPermissionsForSession(sessionId);
       await s.sub.close();
     },
@@ -495,6 +632,7 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
     },
     list: () => Array.from(sessions.keys()),
     shutdown: async () => {
+      for (const s of sessions.values()) clearIdleTimer(s);
       await Promise.all(Array.from(sessions.values()).map((s) => s.sub.close()));
       sessions.clear();
       pendingPermissions.clear();

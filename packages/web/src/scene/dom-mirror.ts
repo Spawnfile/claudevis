@@ -17,7 +17,18 @@ function ensureEl(): HTMLDivElement {
 export interface MirrorInput {
   npcs: Map<
     string,
-    { sessionId: string; model: string; name: string; costUsd: number; state: string }
+    {
+      sessionId: string;
+      model: string;
+      name: string;
+      costUsd: number;
+      state: string;
+      // M4.1: optional in mirror input so existing test fixtures stay valid.
+      // Scene's view.snapshot supplies required values; writer falls back to
+      // 'auto' / false when absent.
+      mode?: string;
+      idle?: boolean;
+    }
   >;
   subagentNpcs: Map<
     string,
@@ -52,6 +63,9 @@ export function mirrorState(s: MirrorInput): void {
     d.setAttribute('data-scene-npc-state', npc.state ?? 'idle');
     d.setAttribute('data-scene-npc-model', npc.model ?? '');
     d.setAttribute('data-scene-npc-cost', String(npc.costUsd ?? 0));
+    // M4.1: surface mode + idle for e2e + dev inspection.
+    d.setAttribute('data-scene-npc-mode', npc.mode ?? 'auto');
+    d.setAttribute('data-scene-npc-idle', String(npc.idle ?? false));
     el.appendChild(d);
   }
 

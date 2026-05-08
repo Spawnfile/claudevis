@@ -965,3 +965,63 @@ describe('createRealCliParser — catalog side-channel', () => {
     ).not.toThrow();
   });
 });
+
+describe('createRealCliParser — system/init.permissionMode (M4.1)', () => {
+  function ctxWithMode(currentMode: 'auto' | 'plan' | 'autoAccept' | 'strict' = 'auto') {
+    let n = 0;
+    return {
+      sessionId: 'sess-test',
+      name: 'test',
+      cwd: '/tmp/test',
+      model: 'sonnet',
+      newEventId: () => `ev-${++n}`,
+      now: () => 1_700_000_000_000,
+      currentMode,
+    };
+  }
+
+  it('emits session.mode.changed when system/init.permissionMode differs from currentMode', () => {
+    const p = createRealCliParser(ctxWithMode('auto'));
+    const out = p({ type: 'system', subtype: 'init', permissionMode: 'plan' });
+    const modeEvent = out.find((e) => e.type === 'session.mode.changed');
+    expect(modeEvent).toBeTruthy();
+    if (modeEvent?.type !== 'session.mode.changed') throw new Error('typecheck');
+    expect(modeEvent.mode).toBe('plan');
+  });
+
+  it('does NOT emit session.mode.changed when permissionMode matches currentMode', () => {
+    const p = createRealCliParser(ctxWithMode('plan'));
+    const out = p({ type: 'system', subtype: 'init', permissionMode: 'plan' });
+    expect(out.find((e) => e.type === 'session.mode.changed')).toBeUndefined();
+  });
+
+  it('does NOT emit session.mode.changed when permissionMode is absent', () => {
+    const p = createRealCliParser(ctxWithMode('auto'));
+    const out = p({ type: 'system', subtype: 'init' });
+    expect(out.find((e) => e.type === 'session.mode.changed')).toBeUndefined();
+  });
+
+  it('does NOT emit session.mode.changed for unknown permissionMode strings', () => {
+    const p = createRealCliParser(ctxWithMode('auto'));
+    const out = p({ type: 'system', subtype: 'init', permissionMode: 'bogus' });
+    expect(out.find((e) => e.type === 'session.mode.changed')).toBeUndefined();
+  });
+
+  it('does NOT re-emit session.mode.changed for duplicate system/init values', () => {
+    const p = createRealCliParser(ctxWithMode('auto'));
+    p({ type: 'system', subtype: 'init', permissionMode: 'plan' }); // first: emits
+    const out = p({ type: 'system', subtype: 'init', permissionMode: 'plan' }); // second: silent
+    expect(out.find((e) => e.type === 'session.mode.changed')).toBeUndefined();
+  });
+
+  it('emits a NEW session.mode.changed when system/init.permissionMode flips back', () => {
+    const p = createRealCliParser(ctxWithMode('auto'));
+    p({ type: 'system', subtype: 'init', permissionMode: 'plan' }); // -> plan
+    p({ type: 'system', subtype: 'init', permissionMode: 'plan' }); // dedup
+    const out = p({ type: 'system', subtype: 'init', permissionMode: 'auto' }); // -> auto
+    const ev = out.find((e) => e.type === 'session.mode.changed');
+    expect(ev).toBeTruthy();
+    if (ev?.type !== 'session.mode.changed') throw new Error('typecheck');
+    expect(ev.mode).toBe('auto');
+  });
+});

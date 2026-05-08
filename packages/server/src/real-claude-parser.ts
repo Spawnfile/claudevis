@@ -1,4 +1,4 @@
-import type { Event } from '@claudevis/shared';
+import type { Event, PermissionMode } from '@claudevis/shared';
 
 function extractSubagentResult(content: unknown): unknown {
   if (typeof content === 'string') return content;
@@ -44,6 +44,14 @@ export interface ParserContext {
    * emitSessionStartedFromInit latch).
    */
   onCatalog?: (raw: Record<string, unknown>) => void;
+  /**
+   * M4.1: SessionManager-known current PermissionMode. The parser uses this
+   * to dedup `system/init.permissionMode` reads — if upstream surfaces a
+   * string field that matches the current mode, no event is emitted; if it
+   * differs, the parser emits session.mode.changed. If the field is absent
+   * or not a recognized PermissionMode literal, no event is emitted.
+   */
+  currentMode?: PermissionMode;
 }
 
 export type RealCliLineParser = (raw: unknown) => Event[];
@@ -56,6 +64,12 @@ export function createRealCliParser(ctx: ParserContext): RealCliLineParser {
 
   const FILE_MUTATING_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
 
+  // M4.1: tracks the most recently emitted PermissionMode within this
+  // parser's lifetime so duplicate system/init lines with the same
+  // permissionMode value don't re-fire session.mode.changed. Initialized
+  // from ctx.currentMode (SessionManager's known mode at parser construction).
+  let lastEmittedMode: PermissionMode | undefined = ctx.currentMode;
+
   return (raw: unknown): Event[] => {
     if (raw === null || typeof raw !== 'object') return [];
     const line = raw as Record<string, unknown>;
@@ -63,30 +77,48 @@ export function createRealCliParser(ctx: ParserContext): RealCliLineParser {
 
     if (line.type === 'system') {
       if (line.subtype === 'init') {
-        // M3b.2: hand the full init payload to SessionManager so it can build
-        // and broadcast the skill catalog. Invoke even on subsequent init lines
-        // (theoretical: a future mode change might re-emit init); the catalog
-        // callback fires every time so the drawer reflects the latest state.
-        if (ctx.onCatalog) ctx.onCatalog(line);
-        if (sessionStartedEmitted) return [];
-        sessionStartedEmitted = true;
-        // When SessionManager emits session.started proactively (real-mode
-        // default), the parser only acks the latch and stays silent so the UI
-        // doesn't see two session.started events for the same sessionId.
-        if (ctx.emitSessionStartedFromInit === false) return [];
-        return [
-          {
+        const events: Event[] = [];
+        // M4.1: opportunistic mode read. If upstream surfaces a recognized
+        // permissionMode string AND it differs from lastEmittedMode (which
+        // tracks the most recent emission within this parser closure), emit
+        // session.mode.changed. Absence, unknown value, or duplicate value
+        // is silently dropped.
+        const VALID_MODES: ReadonlySet<string> = new Set(['auto', 'plan', 'autoAccept', 'strict']);
+        if (
+          typeof line.permissionMode === 'string' &&
+          VALID_MODES.has(line.permissionMode) &&
+          line.permissionMode !== lastEmittedMode
+        ) {
+          const mode = line.permissionMode as PermissionMode;
+          lastEmittedMode = mode;
+          events.push({
             id: ctx.newEventId(),
             ts: ctx.now(),
             sessionId: ctx.sessionId,
-            type: 'session.started',
-            name: ctx.name,
-            cwd: ctx.cwd,
-            model: ctx.model,
-            repo: ctx.repo,
-            branch: ctx.branch,
-          },
-        ];
+            type: 'session.mode.changed',
+            mode,
+          });
+        }
+        // M3b.2: hand the full init payload to SessionManager so it can build
+        // and broadcast the skill catalog.
+        if (ctx.onCatalog) ctx.onCatalog(line);
+        if (sessionStartedEmitted) return events;
+        sessionStartedEmitted = true;
+        // When SessionManager emits session.started proactively (real-mode
+        // default), the parser only acks the latch and stays silent.
+        if (ctx.emitSessionStartedFromInit === false) return events;
+        events.push({
+          id: ctx.newEventId(),
+          ts: ctx.now(),
+          sessionId: ctx.sessionId,
+          type: 'session.started',
+          name: ctx.name,
+          cwd: ctx.cwd,
+          model: ctx.model,
+          repo: ctx.repo,
+          branch: ctx.branch,
+        });
+        return events;
       }
       return [];
     }

@@ -74,6 +74,20 @@ stdin.on('data', async (chunk) => {
       if (msg.type !== 'user.prompt') continue;
       const text = msg.content ?? '';
 
+      // M4.1 sentinel: mid-session mode change. /mode-test <mode> emits a
+      // session.mode.changed Event with the requested mode (default 'plan').
+      // Used by E2E to assert mode-icon swap.
+      if (text.startsWith('/mode-test')) {
+        const arg = text.slice('/mode-test'.length).trim();
+        const mode =
+          arg === 'auto' || arg === 'plan' || arg === 'autoAccept' || arg === 'strict'
+            ? arg
+            : 'plan';
+        await sleep(5);
+        emit({ type: 'session.mode.changed', mode });
+        continue;
+      }
+
       // M3b.1 sentinel: trigger a permission flow without firing the default
       // scripted scene. requestId uses a "req-fake-" prefix so SessionManager
       // tracks it (non-`auto-deny-` prefix → enters pendingPermissions Map).
@@ -150,6 +164,14 @@ stdin.on('data', async (chunk) => {
         content: `echo: ${text}`,
         streaming: false,
       });
+
+      // M4.1: emit a session.idle tail so E2E asserts the idle mirror
+      // attribute without waiting CLAUDEVIS_IDLE_MS (default 30s). The
+      // server-side timer is reset by every line; this fixture-emitted
+      // idle event sets the latch directly so subsequent server-side
+      // re-arm is a no-op until the next event arrives.
+      await sleep(5);
+      emit({ type: 'session.idle', durationMs: 0 });
     } catch {
       emit({ type: 'error', message: 'bad input', recoverable: true });
     }

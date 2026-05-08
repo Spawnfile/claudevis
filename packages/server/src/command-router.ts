@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Command, ServerFrame, SkillEntry } from '@claudevis/shared';
 import type { EventStore } from './event-store.js';
+import { filterZombieSessions } from './replay-filter.js';
 import { scanResumableSessions } from './resume-scanner.js';
 import type { SessionManager } from './session-manager.js';
 
@@ -61,6 +62,7 @@ export function createCommandRouter(deps: CommandRouterDeps): CommandHandler {
           name: cmd.name,
           model: cmd.model,
           resume: cmd.resume,
+          mode: cmd.mode,
         });
         return;
       case 'session.send':
@@ -80,7 +82,7 @@ export function createCommandRouter(deps: CommandRouterDeps): CommandHandler {
         if (cmd.replay) {
           const events =
             cmd.sessionIds === '*'
-              ? store.all()
+              ? filterZombieSessions(store.all())
               : cmd.sessionIds.flatMap((sid) => store.bySession(sid));
           for (const ev of events) send({ type: 'event', event: ev });
         }

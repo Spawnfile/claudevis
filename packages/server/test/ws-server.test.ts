@@ -376,3 +376,90 @@ describe('session.create Command resume forwarding', () => {
     }
   });
 });
+
+describe('subscribe replay filters zombie sessions (M4.1 T2)', () => {
+  it('returns only events from sessions without session.ended when sessionIds=*', async () => {
+    // Build a stub store containing two sessions: s-live (running), s-dead (ended).
+    const stubStore: CommandRouterDeps['store'] = {
+      all: () =>
+        [
+          {
+            id: 'a',
+            ts: 1,
+            sessionId: 's-live',
+            type: 'session.started',
+            name: 'live',
+            cwd: '/x',
+            model: 'sonnet',
+          },
+          {
+            id: 'b',
+            ts: 2,
+            sessionId: 's-dead',
+            type: 'session.started',
+            name: 'dead',
+            cwd: '/x',
+            model: 'sonnet',
+          },
+          { id: 'c', ts: 3, sessionId: 's-dead', type: 'session.ended', reason: 'complete' },
+          { id: 'd', ts: 4, sessionId: 's-live', type: 'user.prompt', content: 'hi' },
+        ] as unknown as Event[],
+      bySession: () => [],
+    };
+    const router = createCommandRouter({
+      mgr: {
+        create: async () => 's',
+        send: async () => {},
+        interrupt: async () => {},
+        clear: async () => {},
+        kill: async () => {},
+        respondToPermission: async () => {},
+      },
+      store: stubStore,
+      getCatalog: () => null,
+      projectsDir: '/nonexistent',
+    });
+    const sent: ServerFrame[] = [];
+    await router({ type: 'subscribe', sessionIds: '*', replay: true }, (f) => sent.push(f));
+    const events = sent.filter((f) => f.type === 'event').map((f) => (f as { event: Event }).event);
+    expect(events.map((e) => e.id)).toEqual(['a', 'd']);
+  });
+
+  it('honors explicit sessionIds without filtering (caller knows what it wants)', async () => {
+    const stubStore: CommandRouterDeps['store'] = {
+      all: () => [],
+      bySession: (sid) =>
+        sid === 's-dead'
+          ? ([
+              {
+                id: 'b',
+                ts: 2,
+                sessionId: 's-dead',
+                type: 'session.started',
+                name: 'dead',
+                cwd: '/x',
+                model: 'sonnet',
+              },
+              { id: 'c', ts: 3, sessionId: 's-dead', type: 'session.ended', reason: 'complete' },
+            ] as unknown as Event[])
+          : [],
+    };
+    const router = createCommandRouter({
+      mgr: {
+        create: async () => 's',
+        send: async () => {},
+        interrupt: async () => {},
+        clear: async () => {},
+        kill: async () => {},
+        respondToPermission: async () => {},
+      },
+      store: stubStore,
+      getCatalog: () => null,
+      projectsDir: '/nonexistent',
+    });
+    const sent: ServerFrame[] = [];
+    await router({ type: 'subscribe', sessionIds: ['s-dead'], replay: true }, (f) => sent.push(f));
+    const events = sent.filter((f) => f.type === 'event').map((f) => (f as { event: Event }).event);
+    expect(events.map((e) => e.id)).toEqual(['b', 'c']);
+  });
+});

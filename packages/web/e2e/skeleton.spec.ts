@@ -376,3 +376,57 @@ test('default scripted prompt increments the subagent spawn count in the mirror 
   expect(countAttr).not.toBeNull();
   expect(Number.parseInt(countAttr!, 10)).toBeGreaterThanOrEqual(1);
 });
+
+test('M4.1: scene mirror shows initial mode-icon and swaps via /mode-test', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.getByText('● connected')).toBeVisible({ timeout: 10_000 });
+  await createSession(page);
+
+  // Initial mode-icon: 'auto' (Headstrong) per default session.create.mode.
+  // The dom-mirror surfaces it as data-scene-npc-mode. The mirror container has
+  // display:none, so we use toBeAttached() rather than toBeVisible().
+  const mirror = page.locator('#scene-dom-mirror');
+  const npcLocator = mirror.locator('[data-scene-npc-id]').first();
+  await expect(npcLocator).toBeAttached({ timeout: 5_000 });
+  await expect(npcLocator).toHaveAttribute('data-scene-npc-mode', 'auto', { timeout: 5_000 });
+
+  // Send /mode-test plan; mode-icon swaps to Cartographer.
+  await page.getByPlaceholder('Type a prompt...').fill('/mode-test plan');
+  await page.getByPlaceholder('Type a prompt...').press('Enter');
+  await expect(npcLocator).toHaveAttribute('data-scene-npc-mode', 'plan', { timeout: 5_000 });
+
+  // /mode-test autoAccept → Trusting.
+  await page.getByPlaceholder('Type a prompt...').fill('/mode-test autoAccept');
+  await page.getByPlaceholder('Type a prompt...').press('Enter');
+  await expect(npcLocator).toHaveAttribute('data-scene-npc-mode', 'autoAccept', { timeout: 5_000 });
+});
+
+test('M4.1: scene mirror shows idle latch + auto-wake on next mutation', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.getByText('● connected')).toBeVisible({ timeout: 10_000 });
+  await createSession(page);
+
+  // The mirror container is display:none — use toBeAttached() not toBeVisible().
+  const mirror = page.locator('#scene-dom-mirror');
+  const npcLocator = mirror.locator('[data-scene-npc-id]').first();
+  await expect(npcLocator).toBeAttached({ timeout: 5_000 });
+
+  // Initial idle is false.
+  await expect(npcLocator).toHaveAttribute('data-scene-npc-idle', 'false');
+
+  // Send a default scripted prompt. The fixture tail (T9) emits session.idle
+  // after the agent.message echo, setting the scene latch. Use .last() to scope
+  // to this test's most-recent echo (chat history may include "echo: hello"
+  // rows from prior tests in the same dev-server process).
+  await page.getByPlaceholder('Type a prompt...').fill('hello');
+  await page.getByPlaceholder('Type a prompt...').press('Enter');
+  await expect(page.getByText('echo: hello').last()).toBeVisible({ timeout: 10_000 });
+  await expect(npcLocator).toHaveAttribute('data-scene-npc-idle', 'true', { timeout: 5_000 });
+
+  // Send /mode-test sentinel (does NOT trigger default scripted scene's tail idle).
+  // The session.mode.changed mutation has sessionId → applyMutation auto-clear
+  // flips idle latch to false. Stable assertion (no follow-up tail idle re-latches).
+  await page.getByPlaceholder('Type a prompt...').fill('/mode-test plan');
+  await page.getByPlaceholder('Type a prompt...').press('Enter');
+  await expect(npcLocator).toHaveAttribute('data-scene-npc-idle', 'false', { timeout: 5_000 });
+});
