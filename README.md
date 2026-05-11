@@ -262,7 +262,9 @@ claudevis is built around a few hard rules:
 
 ## Disclaimer
 
-`claudevis` is an independent open-source community project. It is not affiliated with, endorsed by, or sponsored by Anthropic. The `claude` CLI it integrates with is provided by Anthropic; please see Anthropic's own terms for usage of that tool.
+`claudevis` is an unofficial, community-built GUI for **Claude Code**. It is not affiliated with, endorsed by, or sponsored by **Anthropic, PBC**. **Claude** is a trademark of Anthropic, PBC. The `claude` CLI that claudevis integrates with is provided by Anthropic; please see Anthropic's own terms of service and acceptable use policy for usage of that tool.
+
+claudevis does not redistribute Anthropic software, model weights, or proprietary content. It is a thin client over the public stream-json output of the `claude` CLI that you install and authenticate independently.
 
 ## License
 
