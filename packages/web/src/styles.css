@@ -518,6 +518,71 @@ pre,
   letter-spacing: 0.05em;
 }
 
+/* PromptBar — inline /-completion (M4.3) */
+.prompt-input-wrap {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+}
+.prompt-input-wrap .prompt {
+  width: 100%;
+}
+.completion-dropdown {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 4px);
+  max-height: 240px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 4px 0;
+  list-style: none;
+  background: var(--bg-deep);
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.4);
+  z-index: 10;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 12px;
+}
+.completion-entry {
+  margin: 0;
+  padding: 0;
+  border-left: 2px solid transparent;
+}
+.completion-entry.source-plugin {
+  border-left-color: var(--torch);
+}
+.completion-entry.source-user {
+  border-left-color: var(--moonlit);
+}
+.completion-entry.source-project {
+  border-left-color: var(--mode-cartographer);
+}
+.completion-entry-button {
+  display: block;
+  width: 100%;
+  background: transparent;
+  border: 0;
+  padding: 4px 10px;
+  color: var(--parchment);
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.completion-entry-selected {
+  background: var(--torch-alpha-06);
+}
+.completion-entry-selected .completion-entry-button {
+  color: var(--torch);
+}
+.completion-entry-button:hover {
+  color: var(--torch);
+}
+
 /* Resumable section */
 .resumable-section {
   margin-bottom: 12px;

@@ -207,6 +207,15 @@ than 500 chars collapses behind a `<details>` toggle. Hovering an NPC in
 the scene shows a parchment cost tooltip with cumulative tokens
 (input / output / cached), total cost USD, and last-message cost.
 
+### Inline `/`-completion (M4.3)
+
+Typing `/` in the prompt input opens a parchment dropdown filtered against
+the live skill catalog (slash commands, skills, agents). ArrowDown/ArrowUp
+cycle, Enter or Tab select, Esc closes (auto-reopens on the next keystroke),
+click selects, hover updates the highlight. Cmd-K palette and `skill.run`
+real-mode wiring are intentionally deferred — the M3b.2 skill drawer plus
+`/<skillname>` Enter already cover the daily flow.
+
 ## Status
 
 - [x] M1 &mdash; Walking skeleton
@@ -215,7 +224,7 @@ the scene shows a parchment cost tooltip with cumulative tokens
 - [x] M3b &mdash; Permission round-trip, skill drawer, `--resume` discovery
 - [x] M3c &mdash; Isometric scene grammar — NPCs, sigils, glyphs, tool icons, animations
 - [x] M4.2 &mdash; Chat ergonomics — streaming render, diff math, syntax highlight, tool collapse, cost tooltip
-- [ ] M4.3 &mdash; Inline `/`-completion in PromptBar (Cmd-K palette + `skill.run` deferred)
+- [x] M4.3 &mdash; Inline `/`-completion in PromptBar (Cmd-K palette + `skill.run` deferred)
 
 ## Disclaimer
 

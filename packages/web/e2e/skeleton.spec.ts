@@ -527,3 +527,51 @@ test('M4.2: hovering the NPC stamina bar shows a cost tooltip with cumulative to
   // that input total is a positive multiple of 120 (last-msg row also 120).
   expect(tooltipText ?? '').toMatch(/last msg\$0\.0042/);
 });
+
+test('M4.3: typing "/" opens completion dropdown; ArrowDown + Enter selects an entry', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await expect(page.getByText('● connected')).toBeVisible({ timeout: 10_000 });
+
+  // createSession waits for both the .session card and the .model-badge to
+  // render — by then the server has also broadcast skill.catalog, so the
+  // frontend store's catalog is populated.
+  await createSession(page);
+
+  const input = page.getByPlaceholder('Type a prompt...');
+  await expect(input).toBeEnabled();
+  await input.click();
+
+  // Type "/" — dropdown opens with the full catalog.
+  await input.fill('/');
+  const dropdown = page.locator('[data-testid="completion-dropdown"]');
+  await expect(dropdown).toBeVisible();
+
+  // Capture initial entry count > 0 (fake fixture exposes 3 entries, but this
+  // test should not depend on the exact number — only on >= 2 after narrowing).
+  const initialCount = await page.locator('[data-testid="completion-entry"]').count();
+  expect(initialCount).toBeGreaterThan(0);
+
+  // Narrow to "/test" — fake fixture has `plugin-a:test-skill`, `plugin-a:test-cmd`,
+  // `test-agent`. All three names contain "test"; the test asserts >= 2 so
+  // ArrowDown moves to a distinct entry.
+  await input.fill('/test');
+  await expect(dropdown).toBeVisible();
+  const narrowedNames = await page
+    .locator('[data-testid="completion-entry"]')
+    .evaluateAll((nodes) => nodes.map((n) => (n as HTMLElement).dataset.name ?? ''));
+  expect(narrowedNames.length).toBeGreaterThanOrEqual(2);
+  for (const name of narrowedNames) {
+    expect(name.toLowerCase()).toContain('test');
+  }
+
+  // selectedIndex starts at 0 → ArrowDown moves to 1 → Enter selects narrowedNames[1].
+  await input.press('ArrowDown');
+  await input.press('Enter');
+
+  await expect(dropdown).toBeHidden();
+  const finalValue = await input.inputValue();
+  expect(finalValue).toMatch(/^\/[a-zA-Z0-9_:-]+ $/);
+  expect(finalValue.trim().slice(1)).toBe(narrowedNames[1]);
+});
