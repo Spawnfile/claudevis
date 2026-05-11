@@ -140,6 +140,50 @@ describe('animator', () => {
     expect(easeInOutQuad(0.5)).toBeCloseTo(0.5, 5);
   });
 
+  it('survives a target whose setter throws (mid-tween) by dropping the tween', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1000);
+    // PIXI 8 race: a sprite destroyed by a prior tween's onDone causes the
+    // next tween's position setter to read `_texture.orig` on null and
+    // throw. _step swallows the throw and splices the tween so it does not
+    // crash on every subsequent frame.
+    const target: Record<string, number> = {};
+    Object.defineProperty(target, 'x', {
+      set() {
+        throw new TypeError("Cannot read properties of null (reading 'orig')");
+      },
+      get: () => 0,
+    });
+    animator.tween(target, 'x', 0, 100, 200);
+    vi.setSystemTime(1100); // mid-tween
+    expect(() => _step()).not.toThrow();
+    // Tween was spliced — next step does not throw either.
+    vi.setSystemTime(1300);
+    expect(() => _step()).not.toThrow();
+  });
+
+  it('survives a target whose setter throws on the final write', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1000);
+    const target: Record<string, number> = {};
+    Object.defineProperty(target, 'x', {
+      set() {
+        throw new TypeError("Cannot read properties of null (reading 'orig')");
+      },
+      get: () => 0,
+    });
+    const onDone = vi.fn();
+    animator.tween(target, 'x', 0, 100, 200, { onDone });
+    vi.setSystemTime(1200); // tween completes
+    expect(() => _step()).not.toThrow();
+    // onDone still fires (cleanup must run even if the final value write threw).
+    expect(onDone).toHaveBeenCalledTimes(1);
+    // Tween was spliced — next step is a no-op.
+    vi.setSystemTime(1400);
+    expect(() => _step()).not.toThrow();
+    expect(onDone).toHaveBeenCalledTimes(1);
+  });
+
   it('multiple concurrent tweens advance independently', () => {
     vi.useFakeTimers();
     vi.setSystemTime(1000);

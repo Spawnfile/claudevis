@@ -105,6 +105,34 @@ stdin.on('data', async (chunk) => {
         continue;
       }
 
+      // M4.2 sentinel: streaming-message exerciser. Emits four agent.message
+      // chunks with streaming:true, then a final agent.message with the full
+      // concatenated text and streaming:false. Used by E2E to assert that
+      // Chat.tsx renders an incremental row that converges on the final content.
+      if (text.startsWith('/stream-test')) {
+        const chunks = ['Once ', 'upon ', 'a ', 'time'];
+        for (const piece of chunks) {
+          await sleep(15);
+          emit({ type: 'agent.message', content: piece, streaming: true });
+        }
+        await sleep(10);
+        emit({ type: 'agent.message', content: chunks.join(''), streaming: false });
+        continue;
+      }
+
+      // M4.2 sentinel: tool-IO collapse exerciser. Emits a tool.started with a
+      // large input (>500 chars) so Chat.tsx's <details> collapse path engages
+      // for the E2E assertion. Followed by a stub tool.completed.
+      if (text.startsWith('/big-tool-test')) {
+        const callId = next();
+        const big = 'x'.repeat(900);
+        await sleep(5);
+        emit({ type: 'tool.started', callId, name: 'Read', input: { payload: big } });
+        await sleep(5);
+        emit({ type: 'tool.completed', callId, output: { lines: 1 }, status: 'ok', durationMs: 5 });
+        continue;
+      }
+
       // Default scripted scene — unchanged from M2/M3a.
       await sleep(5);
       emit({ type: 'agent.thinking', content: `Considering: ${text}`, streaming: false });

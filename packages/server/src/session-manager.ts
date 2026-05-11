@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { Event, PermissionMode, SkillEntry } from '@claudevis/shared';
 import { buildSkillEntries, extractInvokableNames } from './catalog.js';
 import type { EventStore } from './event-store.js';
+import { type GitDiffRunner, bunGitDiffRunner, computeFileDiff } from './file-diff.js';
 import { detectGitInfo } from './git-info.js';
 import { type ParserContext, createRealCliParser } from './real-claude-parser.js';
 import { serializeUserPromptForRealCli } from './real-claude-serializer.js';
@@ -46,6 +47,12 @@ export interface SessionManagerOptions {
    * skill.catalog ServerFrame to all clients. Optional.
    */
   onCatalog?: (skills: SkillEntry[]) => void;
+  /**
+   * M4.2: optional injection point for the git numstat runner used to enrich
+   * file.changed events with real plus/minus line counts in real mode.
+   * Defaults to bunGitDiffRunner. Tests pass a stub returning canned stdout.
+   */
+  gitDiffRunner?: GitDiffRunner;
 }
 
 interface SessionState {
@@ -451,16 +458,26 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
           },
         };
         const parse = createRealCliParser(parserCtx);
+        const gitRunner = opts.gitDiffRunner ?? bunGitDiffRunner;
         lineHandler = (raw) => {
           if (process.env.CLAUDEVIS_DEBUG === '1') {
             const r = raw as { type?: string; subtype?: string };
             console.log(`[claudevis] line type=${r?.type} subtype=${r?.subtype ?? '-'} sess=${id}`);
           }
           resetIdle(state);
-          const events = parse(raw);
-          if (process.env.CLAUDEVIS_DEBUG === '1' && events.length === 0) {
+          const parsed = parse(raw);
+          if (process.env.CLAUDEVIS_DEBUG === '1' && parsed.length === 0) {
             console.log('[claudevis]   -> dropped (parser returned 0 events)');
           }
+          // M4.2: enrich file.changed with real plus/minus from git numstat.
+          // The parser is pure and emits 0/0 placeholders; the session-manager
+          // owns `state.cwd` and shells out synchronously (1s timeout via
+          // Bun.spawnSync).
+          const events = parsed.map((ev): Event => {
+            if (ev.type !== 'file.changed') return ev;
+            const diff = computeFileDiff(state.cwd, ev.path, gitRunner);
+            return { ...ev, plus: diff.plus, minus: diff.minus };
+          });
           for (const ev of events) {
             // M4.1: keep state.lastMode in sync with parser-emitted mode
             // events so future parser reconstructions use the correct

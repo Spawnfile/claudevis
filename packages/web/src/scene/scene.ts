@@ -1,6 +1,6 @@
 import type { Event, PermissionMode } from '@claudevis/shared';
 // packages/web/src/scene/scene.ts
-import { type Application, Container, Graphics, Sprite, Texture, Ticker } from 'pixi.js';
+import { type Application, Container, Graphics, Sprite, Text, Texture, Ticker } from 'pixi.js';
 import { ANIM, animator, easeOutQuad } from './animator';
 import { mirrorState } from './dom-mirror';
 import { eventToMutations } from './event-mapper';
@@ -73,6 +73,7 @@ export interface Scene {
   panBy(dx: number, dy: number): void;
   resetPan(): void;
   getPan(): { x: number; y: number };
+  setHoverHandler(cb: ((sessionId: string | null) => void) | null): void;
   destroy(): void;
 }
 
@@ -195,6 +196,7 @@ export function createScene(app: Application): Scene {
   const emberParticles = new Set<Sprite>();
   let activeSessionId: string | null = null;
   void activeSessionId;
+  let hoverHandler: ((sessionId: string | null) => void) | null = null;
 
   startLanternFlicker();
   startEmberSpawner();
@@ -212,6 +214,10 @@ export function createScene(app: Application): Scene {
     const container = new Container();
     container.position.set(screen.x, screen.y);
     container.zIndex = slot.col + slot.row;
+    container.eventMode = 'static';
+    container.cursor = 'pointer';
+    container.on('pointerover', () => hoverHandler?.(sessionId));
+    container.on('pointerout', () => hoverHandler?.(null));
 
     const tile = Sprite.from(SPRITES.tileGrass);
     tile.anchor.set(0.5, 0.5);
@@ -723,7 +729,7 @@ export function createScene(app: Application): Scene {
     syncMirror();
   }
 
-  function flyFileToArchive(sessionId: string, _path: string): void {
+  function flyFileToArchive(sessionId: string, _path: string, plus = 0, minus = 0): void {
     // M3c.3: single shared file-glyph (parchment sprite) flies from the source
     // NPC's screen position to the bottom-right archive corner, then counter
     // increments + sprite destroys. Per-path differentiation (group by
@@ -744,6 +750,25 @@ export function createScene(app: Application): Scene {
     const startY = view.container.position.y - SPRITE.npcH;
     sprite.position.set(startX, startY);
     spriteLayer.addChild(sprite);
+
+    // M4.2: optional +N -M label flying alongside the sprite. Skipped when
+    // both counts are 0 (e.g. real-mode parser fallback when git numstat
+    // returned null, or non-git repos).
+    let label: Text | null = null;
+    if (plus > 0 || minus > 0) {
+      label = new Text({
+        text: `+${plus} -${minus}`,
+        style: {
+          fontFamily: 'monospace',
+          fontSize: 10,
+          fill: 0xc8e1ff,
+          stroke: { color: 0x000000, width: 1 },
+        },
+      });
+      label.anchor.set(0, 0.5);
+      label.position.set(startX + 12, startY - 6);
+      spriteLayer.addChild(label);
+    }
 
     // Bottom-right corner relative to the scene root's coordinate space. The
     // root is centered on the viewport (defaultRootX/Y above); offset to
@@ -770,11 +795,33 @@ export function createScene(app: Application): Scene {
         onDone: () => {
           if (sprite.parent) sprite.parent.removeChild(sprite);
           sprite.destroy();
+          if (label) {
+            if (label.parent) label.parent.removeChild(label);
+            label.destroy();
+          }
           archiveCount += 1;
           syncMirror();
         },
       },
     );
+    if (label) {
+      animator.tween(
+        label.position as unknown as Record<string, number>,
+        'x',
+        startX + 12,
+        targetX + 12,
+        ANIM.fileFly,
+        { ease: easeOutQuad },
+      );
+      animator.tween(
+        label.position as unknown as Record<string, number>,
+        'y',
+        startY - 6,
+        targetY - 6,
+        ANIM.fileFly,
+        { ease: easeOutQuad },
+      );
+    }
   }
 
   function attachPermissionSigil(
@@ -1014,7 +1061,7 @@ export function createScene(app: Application): Scene {
         removeSubagentNpc(m.childSessionId, m.parentCallId);
         break;
       case 'fileFly':
-        flyFileToArchive(m.sessionId, m.path);
+        flyFileToArchive(m.sessionId, m.path, m.plus, m.minus);
         break;
       case 'permissionSigil':
         attachPermissionSigil(m.sessionId, m.requestId, m.autoDeny, m.toolName);
@@ -1195,6 +1242,9 @@ export function createScene(app: Application): Scene {
     },
     getPan(): { x: number; y: number } {
       return { x: root.position.x, y: root.position.y };
+    },
+    setHoverHandler(cb) {
+      hoverHandler = cb;
     },
     destroy(): void {
       animator.cancelAll();

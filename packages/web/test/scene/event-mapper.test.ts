@@ -224,7 +224,23 @@ describe('event-mapper.eventToMutations (M3c.1 + M3c.2a + M3c.2b)', () => {
       minus: 0,
     };
     expect(eventToMutations(e)).toEqual([
-      { kind: 'fileFly', sessionId: 'session-1', path: '/tmp/x.txt' },
+      { kind: 'fileFly', sessionId: 'session-1', path: '/tmp/x.txt', plus: 0, minus: 0 },
+    ]);
+  });
+
+  it('forwards plus/minus on file.changed → fileFly', () => {
+    const ev: Event = {
+      id: 'e1',
+      ts: 0,
+      sessionId: 's1',
+      type: 'file.changed',
+      path: 'demo.ts',
+      plus: 7,
+      minus: 2,
+      preview: '',
+    };
+    expect(eventToMutations(ev)).toEqual([
+      { kind: 'fileFly', sessionId: 's1', path: 'demo.ts', plus: 7, minus: 2 },
     ]);
   });
 

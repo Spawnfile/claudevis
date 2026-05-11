@@ -352,3 +352,63 @@ describe('SessionManager — session.idle timer (M4.1)', () => {
     delete process.env.CLAUDEVIS_IDLE_MS;
   });
 });
+
+describe('M4.2 file.changed diff enrichment', () => {
+  // Real-mode integration: spawn a tiny inline bun script that emits a
+  // synthetic claude stream-json sequence (init + Edit tool_use +
+  // tool_result). The parser produces a file.changed with plus=0/minus=0;
+  // the session-manager overlays the gitDiffRunner output.
+
+  it('replaces parser-emitted plus/minus with computed git numstat', async () => {
+    const store = createEventStore({ kind: 'memory' });
+    const events: Event[] = [];
+    const inline = [
+      `process.stdout.write(JSON.stringify({type:'system',subtype:'init',skills:[],slash_commands:[],agents:[],plugins:[]})+'\\n');`,
+      `process.stdout.write(JSON.stringify({type:'assistant',message:{content:[{type:'tool_use',id:'tu1',name:'Edit',input:{file_path:'demo.ts',old_string:'a',new_string:'b'}}]}})+'\\n');`,
+      `process.stdout.write(JSON.stringify({type:'user',message:{content:[{type:'tool_result',tool_use_id:'tu1',content:'ok'}]}})+'\\n');`,
+      'process.stdin.resume();',
+    ].join('\n');
+    const mgr = createSessionManager({
+      store,
+      onEvent: (e) => events.push(e),
+      claudeCommand: { command: 'bun', baseArgs: ['-e', inline] },
+      mode: 'real',
+      gitDiffRunner: () => '7\t2\tdemo.ts\n',
+    });
+    const id = await mgr.create({ cwd: process.cwd(), name: 'diff-test', model: 'sonnet' });
+    await new Promise((r) => setTimeout(r, 300));
+    const fc = events.find((e) => e.type === 'file.changed');
+    expect(fc).toBeDefined();
+    if (fc?.type !== 'file.changed') throw new Error('typecheck');
+    expect(fc.plus).toBe(7);
+    expect(fc.minus).toBe(2);
+    expect(fc.path).toBe('demo.ts');
+    await mgr.kill(id);
+  });
+
+  it('falls back to 0/0 when runner returns null', async () => {
+    const store = createEventStore({ kind: 'memory' });
+    const events: Event[] = [];
+    const inline = [
+      `process.stdout.write(JSON.stringify({type:'system',subtype:'init',skills:[],slash_commands:[],agents:[],plugins:[]})+'\\n');`,
+      `process.stdout.write(JSON.stringify({type:'assistant',message:{content:[{type:'tool_use',id:'tu1',name:'Edit',input:{file_path:'gone.ts',old_string:'a',new_string:'b'}}]}})+'\\n');`,
+      `process.stdout.write(JSON.stringify({type:'user',message:{content:[{type:'tool_result',tool_use_id:'tu1',content:'ok'}]}})+'\\n');`,
+      'process.stdin.resume();',
+    ].join('\n');
+    const mgr = createSessionManager({
+      store,
+      onEvent: (e) => events.push(e),
+      claudeCommand: { command: 'bun', baseArgs: ['-e', inline] },
+      mode: 'real',
+      gitDiffRunner: () => null,
+    });
+    const id = await mgr.create({ cwd: process.cwd(), name: 'diff-fallback', model: 'sonnet' });
+    await new Promise((r) => setTimeout(r, 300));
+    const fc = events.find((e) => e.type === 'file.changed');
+    expect(fc).toBeDefined();
+    if (fc?.type !== 'file.changed') throw new Error('typecheck');
+    expect(fc.plus).toBe(0);
+    expect(fc.minus).toBe(0);
+    await mgr.kill(id);
+  });
+});

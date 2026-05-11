@@ -68,13 +68,32 @@ export function _step(): void {
     if (!t) continue;
     const elapsed = now - t.startMs;
     if (elapsed >= t.durationMs) {
-      t.target[t.prop] = t.to;
-      t.onDone?.();
+      // Target may have been destroyed by a prior tween's onDone fired
+      // earlier in this same frame (e.g. file-fly's y tween destroys sprite
+      // before x tween writes its final position). PIXI 8 setters touch
+      // _texture.orig on transform recalculation; a write to a destroyed
+      // ObservablePoint throws. Swallow + always splice so the active list
+      // doesn't accumulate dead entries that crash on every subsequent frame.
+      try {
+        t.target[t.prop] = t.to;
+      } catch {
+        // ignore — target destroyed mid-tween
+      }
+      try {
+        t.onDone?.();
+      } catch {
+        // ignore — onDone raced with destroy
+      }
       active.splice(i, 1);
       continue;
     }
-    const u = t.ease ? t.ease(elapsed / t.durationMs) : elapsed / t.durationMs;
-    t.target[t.prop] = t.from + (t.to - t.from) * u;
+    try {
+      const u = t.ease ? t.ease(elapsed / t.durationMs) : elapsed / t.durationMs;
+      t.target[t.prop] = t.from + (t.to - t.from) * u;
+    } catch {
+      // Same race as above but mid-tween — drop the tween entirely.
+      active.splice(i, 1);
+    }
   }
 }
 

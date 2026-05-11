@@ -35,7 +35,7 @@ export type Mutation =
       agentType: string;
     }
   | { kind: 'removeSubagentNpc'; childSessionId: string; parentCallId: string }
-  | { kind: 'fileFly'; sessionId: string; path: string }
+  | { kind: 'fileFly'; sessionId: string; path: string; plus?: number; minus?: number }
   | {
       kind: 'permissionSigil';
       sessionId: string;

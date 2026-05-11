@@ -1,8 +1,12 @@
 import type { Event } from '@claudevis/shared';
 import type React from 'react';
+import { memo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { CodeBlock } from './CodeBlock.js';
+import { ToolIo } from './ToolIo.js';
 import { useConnection } from './store/connection.js';
+import { collapseStreamingMessages } from './streaming.js';
 
 export function Chat({ sessionId }: { sessionId: string | null }) {
   const events = useConnection((s) => s.events);
@@ -10,21 +14,38 @@ export function Chat({ sessionId }: { sessionId: string | null }) {
   if (!sessionId)
     return <div style={{ color: '#7a8699' }}>Select a session or open a new one.</div>;
   const filtered = events.filter((e) => e.sessionId === sessionId);
+  const collapsed = collapseStreamingMessages(filtered);
   const respond = (requestId: string, decision: 'allow' | 'deny' | 'always') => {
     send({ type: 'permission.respond', requestId, decision });
   };
   return (
     <div data-testid="chat">
-      {filtered.map((e) => (
-        <ChatRow key={e.id} event={e} events={filtered} respond={respond} />
+      {collapsed.map((e) => (
+        <ChatRow key={e.id} event={e} events={collapsed} respond={respond} />
       ))}
     </div>
   );
 }
 
-function Markdown({ children }: { children: string }) {
-  return <ReactMarkdown remarkPlugins={[remarkGfm]}>{children}</ReactMarkdown>;
+interface CodeProps {
+  inline?: boolean;
+  className?: string;
+  children?: React.ReactNode;
 }
+
+const Code = memo(function Code({ inline, className, children }: CodeProps) {
+  if (inline) return <code className={className}>{children}</code>;
+  const lang = (className ?? '').replace(/^language-/, '') || 'text';
+  return <CodeBlock code={String(children).replace(/\n$/, '')} lang={lang} />;
+});
+
+const Markdown = memo(function Markdown({ children }: { children: string }) {
+  return (
+    <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ code: Code as never }}>
+      {children}
+    </ReactMarkdown>
+  );
+});
 
 // Exhaustiveness helper — the `default` arm assigns the remaining union
 // member to `never`. If a future protocol change adds an Event type and
@@ -73,9 +94,7 @@ function ChatRow({ event: e, events, respond }: ChatRowProps): React.JSX.Element
           <div className="who">⚙ Tool call</div>
           <div className="body">
             <code>{e.name}</code>
-            <pre style={{ fontSize: 11, color: '#7a8699', margin: 0 }}>
-              {JSON.stringify(e.input, null, 2)}
-            </pre>
+            <ToolIo content={JSON.stringify(e.input, null, 2)} />
           </div>
         </div>
       );
@@ -84,9 +103,7 @@ function ChatRow({ event: e, events, respond }: ChatRowProps): React.JSX.Element
         <div className="msg tool" data-evtype="tool.completed">
           <div className="who">✓ Tool result ({e.status})</div>
           <div className="body">
-            <pre style={{ fontSize: 11, color: '#7a8699', margin: 0 }}>
-              {JSON.stringify(e.output, null, 2)}
-            </pre>
+            <ToolIo content={JSON.stringify(e.output, null, 2)} />
             <span style={{ fontSize: 10, color: '#7a8699' }}>{e.durationMs}ms</span>
           </div>
         </div>
@@ -103,9 +120,7 @@ function ChatRow({ event: e, events, respond }: ChatRowProps): React.JSX.Element
         <div className="msg subagent" data-evtype="subagent.completed">
           <div className="who">🪄 Subagent done ({e.status})</div>
           <div className="body">
-            <pre style={{ fontSize: 11, color: '#7a8699', margin: 0 }}>
-              {JSON.stringify(e.result, null, 2)}
-            </pre>
+            <ToolIo content={JSON.stringify(e.result, null, 2)} />
           </div>
         </div>
       );
@@ -123,8 +138,11 @@ function ChatRow({ event: e, events, respond }: ChatRowProps): React.JSX.Element
         <div className="msg file" data-evtype="file.changed">
           <div className="who">📝 File changed</div>
           <div className="body">
-            <code>{e.path}</code> <span style={{ color: '#6dba3a' }}>+{e.plus}</span>{' '}
-            <span style={{ color: '#d94a4a' }}>-{e.minus}</span>
+            <code>{e.path}</code>{' '}
+            <span className="diff-badge">
+              <span style={{ color: '#6dba3a' }}>+{e.plus}</span>{' '}
+              <span style={{ color: '#d94a4a' }}>-{e.minus}</span>
+            </span>
             {e.preview && (
               <pre style={{ fontSize: 11, color: '#7a8699', margin: 0 }}>{e.preview}</pre>
             )}

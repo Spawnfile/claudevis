@@ -2,7 +2,8 @@ import type { Event } from '@claudevis/shared';
 import { Application, Assets } from 'pixi.js';
 // packages/web/src/scene/SceneCanvas.tsx
 import { useCallback, useEffect, useRef } from 'react';
-import { useEventStream } from '../store/connection';
+import { CostTooltip } from '../CostTooltip';
+import { useConnection, useEventStream } from '../store/connection';
 import { type Scene, createScene } from './scene';
 import { SPRITES } from './sprite-manifest';
 
@@ -41,6 +42,10 @@ export function SceneCanvas({ activeSessionId }: { activeSessionId: string | nul
       }
 
       sceneRef.current = createScene(app);
+      // Read setHoveredSession lazily via getState() so this effect's [] deps
+      // array stays valid (Zustand setters are stable but referencing them
+      // explicitly here would still produce a noisy lint warning).
+      sceneRef.current.setHoverHandler(useConnection.getState().setHoveredSession);
     })();
 
     return () => {
@@ -172,6 +177,7 @@ export function SceneCanvas({ activeSessionId }: { activeSessionId: string | nul
           ⛶
         </button>
       </div>
+      <CostTooltip />
     </div>
   );
 }

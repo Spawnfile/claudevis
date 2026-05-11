@@ -10,9 +10,11 @@ interface ConnectionState {
   catalog: SkillEntry[] | null;
   pendingPromptPrefix: string;
   resumable: ResumableSession[];
+  hoveredSessionId: string | null;
   connect: (url: string) => void;
   send: (cmd: Command) => void;
   setPendingPromptPrefix: (s: string) => void;
+  setHoveredSession: (id: string | null) => void;
   reset: () => void;
 }
 
@@ -28,6 +30,7 @@ export const useConnection = create<ConnectionState>((set, get) => ({
   catalog: null,
   pendingPromptPrefix: '',
   resumable: [],
+  hoveredSessionId: null,
   connect: (url) => {
     // React 19 strict-mode mounts effects twice in development. Skip a second
     // connect to the same URL so we don't open two sockets and end up with
@@ -102,6 +105,7 @@ export const useConnection = create<ConnectionState>((set, get) => ({
     ws.send(JSON.stringify(cmd));
   },
   setPendingPromptPrefix: (s) => set({ pendingPromptPrefix: s }),
+  setHoveredSession: (id) => set({ hoveredSessionId: id }),
   reset: () =>
     set({
       socket: null,
@@ -111,6 +115,7 @@ export const useConnection = create<ConnectionState>((set, get) => ({
       catalog: null,
       pendingPromptPrefix: '',
       resumable: [],
+      hoveredSessionId: null,
     }),
 }));
 

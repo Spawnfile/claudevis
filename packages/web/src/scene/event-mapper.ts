@@ -77,7 +77,9 @@ export function eventToMutations(e: Event): Mutation[] {
         },
       ];
     case 'file.changed':
-      return [{ kind: 'fileFly', sessionId: e.sessionId, path: e.path }];
+      return [
+        { kind: 'fileFly', sessionId: e.sessionId, path: e.path, plus: e.plus, minus: e.minus },
+      ];
     case 'permission.requested':
       return [
         {

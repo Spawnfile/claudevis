@@ -194,15 +194,28 @@ headings, Inter Tight body, and JetBrains Mono code/labels.
 Subsequent M3c sub-milestones add the full scene grammar (subagent dispatch,
 permission sigils, file-fly glyphs, lore-locked tool icons) and animations.
 
+### Chat ergonomics (M4.2)
+
+Streaming `agent.message` chunks collapse into a single converging row
+(`/stream-test` in fake mode exercises the path). `file.changed` rows show
+real `+N -M` line counts via `git diff --numstat` shelled from the session
+cwd (bounded 1s timeout, fallback to 0/0 on failure) — surfaced both as a
+chat-row badge and as a fly-by label on the scene's file archive sprite.
+Markdown code fences are syntax-highlighted with Shiki (`github-dark`
+theme, lazy-loaded so first paint isn't blocked). Tool I/O JSON longer
+than 500 chars collapses behind a `<details>` toggle. Hovering an NPC in
+the scene shows a parchment cost tooltip with cumulative tokens
+(input / output / cached), total cost USD, and last-message cost.
+
 ## Status
 
 - [x] M1 &mdash; Walking skeleton
 - [x] M2 &mdash; Real-CLI integration with stream-json line parser
 - [x] M3a &mdash; Subagent + file.changed synthesis, model dropdown, markdown rendering
 - [x] M3b &mdash; Permission round-trip, skill drawer, `--resume` discovery
-- [x] M3c.1 &mdash; Isometric scene panel — PixiJS canvas, NPC spawn/stamina, moonlit theme
-- [ ] M3c.2+ &mdash; Full scene grammar (subagent NPCs, sigils, glyphs, tool icons, animations)
-- [ ] M4 &mdash; `claude login` OAuth, OBS broadcast mode, session persistence
+- [x] M3c &mdash; Isometric scene grammar — NPCs, sigils, glyphs, tool icons, animations
+- [x] M4.2 &mdash; Chat ergonomics — streaming render, diff math, syntax highlight, tool collapse, cost tooltip
+- [ ] M4.3 &mdash; Inline `/`-completion in PromptBar (Cmd-K palette + `skill.run` deferred)
 
 ## Disclaimer
 
