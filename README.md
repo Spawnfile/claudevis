@@ -7,7 +7,7 @@
 <p align="center"><em>An isometric pixel-art GUI for the <code>claude</code> agentic CLI &mdash; a moonlit watchtower over your sessions, tools, subagents, and token spend.</em></p>
 
 <p align="center">
-  <a href="https://claudevis.com">claudevis.com</a> &nbsp;·&nbsp;
+  <a href="claudevis.com">claudevis.com</a> &nbsp;·&nbsp;
   <a href="./packages/landing/lore/lore.md">Bestiarium claudevisi</a> &nbsp;·&nbsp;
   <a href="#status">Status</a> &nbsp;·&nbsp;
   <a href="#run-development">Run</a>
